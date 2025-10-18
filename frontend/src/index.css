@@ -1,0 +1,132 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
+All colors MUST be HSL.
+*/
+
+@layer base {
+  :root {
+    --background: 0 0% 100%;
+    --foreground: 155 15% 25%;
+
+    --card: 0 0% 100%;
+    --card-foreground: 155 15% 25%;
+
+    --popover: 0 0% 100%;
+    --popover-foreground: 155 15% 25%;
+
+    --primary: 142 76% 36%;
+    --primary-foreground: 0 0% 98%;
+
+    --secondary: 142 30% 96%;
+    --secondary-foreground: 155 15% 25%;
+
+    --muted: 142 30% 96%;
+    --muted-foreground: 155 10% 50%;
+
+    --accent: 200 70% 45%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 142 30% 90%;
+    --input: 142 30% 95%;
+    --ring: 142 76% 36%;
+
+    /* Eco-friendly design system */
+    --forest-primary: 142 76% 36%;
+    --forest-secondary: 158 64% 52%;
+    --ocean-blue: 200 70% 45%;
+    --earth-brown: 30 40% 60%;
+    --success-green: 142 76% 36%;
+    --warning-amber: 45 93% 58%;
+    
+    /* Gradients */
+    --gradient-eco: linear-gradient(135deg, hsl(var(--forest-primary)), hsl(var(--forest-secondary)));
+    --gradient-ocean: linear-gradient(135deg, hsl(var(--ocean-blue)), hsl(var(--forest-secondary)));
+    --gradient-earth: linear-gradient(135deg, hsl(var(--earth-brown)), hsl(var(--forest-primary)));
+    
+    /* Shadows */
+    --shadow-eco: 0 10px 30px -10px hsl(var(--forest-primary) / 0.2);
+    --shadow-elevation: 0 4px 20px -4px hsl(var(--forest-primary) / 0.15);
+    
+    /* Animations */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: all 0.4s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+
+    --radius: 0.5rem;
+
+    --sidebar-background: 0 0% 98%;
+
+    --sidebar-foreground: 240 5.3% 26.1%;
+
+    --sidebar-primary: 240 5.9% 10%;
+
+    --sidebar-primary-foreground: 0 0% 98%;
+
+    --sidebar-accent: 240 4.8% 95.9%;
+
+    --sidebar-accent-foreground: 240 5.9% 10%;
+
+    --sidebar-border: 220 13% 91%;
+
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+
+  .dark {
+    --background: 155 20% 8%;
+    --foreground: 142 30% 90%;
+
+    --card: 155 20% 10%;
+    --card-foreground: 142 30% 90%;
+
+    --popover: 155 20% 10%;
+    --popover-foreground: 142 30% 90%;
+
+    --primary: 142 70% 45%;
+    --primary-foreground: 155 20% 8%;
+
+    --secondary: 155 15% 20%;
+    --secondary-foreground: 142 30% 90%;
+
+    --muted: 155 15% 20%;
+    --muted-foreground: 142 20% 70%;
+
+    --accent: 200 70% 50%;
+    --accent-foreground: 155 20% 8%;
+
+    --destructive: 0 75% 55%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 155 15% 25%;
+    --input: 155 15% 25%;
+    --ring: 142 70% 45%;
+
+    /* Dark mode eco colors */
+    --forest-primary: 142 70% 45%;
+    --forest-secondary: 158 60% 55%;
+    --ocean-blue: 200 70% 50%;
+    --earth-brown: 30 35% 65%;
+    --sidebar-background: 240 5.9% 10%;
+    --sidebar-foreground: 240 4.8% 95.9%;
+    --sidebar-primary: 224.3 76.3% 48%;
+    --sidebar-primary-foreground: 0 0% 100%;
+    --sidebar-accent: 240 3.7% 15.9%;
+    --sidebar-accent-foreground: 240 4.8% 95.9%;
+    --sidebar-border: 240 3.7% 15.9%;
+    --sidebar-ring: 217.2 91.2% 59.8%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+  }
+}

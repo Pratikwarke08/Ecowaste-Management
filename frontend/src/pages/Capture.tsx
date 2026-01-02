@@ -186,16 +186,11 @@ const Capture = () => {
         }
 
         const dist = getDistanceFromLatLonInMeters(
-            coords.lat, 
-            coords.lng, 
-            selectedDustbin.coordinates.lat, 
-            selectedDustbin.coordinates.lng
+          coords.lat,
+          coords.lng,
+          selectedDustbin.coordinates.lat,
+          selectedDustbin.coordinates.lng
         );
-
-        if (dist > 1) {
-            alert(`You are ${dist.toFixed(2)} meters away from the selected dustbin. You must be within 1 meter to verify disposal. Please move closer.`);
-            return;
-        }
 
         setDisposalLocation(coords);
         setUserLocation(coords);
@@ -204,7 +199,7 @@ const Capture = () => {
           alert('Please capture the disposal photo before recording GPS location.');
           return;
         }
-        
+
         setStep('verify');
       }
     } catch (e) {

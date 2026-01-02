@@ -9,6 +9,15 @@ import { useToast } from '@/hooks/use-toast';
 import { API_BASE } from '@/lib/api';
 import { applyTheme } from '@/lib/theme';
 
+const safeJson = async (res: Response) => {
+  const text = await res.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(text || "Invalid server response");
+  }
+};
+
 interface LoginFormProps {
   onLogin: (userType: 'collector' | 'employee', userData: { name?: string; email: string }) => void;
 }
@@ -35,7 +44,7 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!validateEmail(email)) {
       toast({
         title: "Invalid Email",
@@ -56,12 +65,12 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
 
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/auth/login`, {
+      const res = await fetch(`${API_BASE}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ email, password, role: userType })
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) {
         throw new Error(data?.error || 'Login failed');
       }
@@ -92,7 +101,7 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
 
   const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     if (!name.trim()) {
       toast({
         title: "Name Required",
@@ -122,12 +131,12 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
 
     setIsLoading(true);
     try {
-      const res = await fetch(`${API_BASE}/auth/signup`, {
+      const res = await fetch(`${API_BASE}/api/auth/signup`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ name, email, password, role: userType })
       });
-      const data = await res.json();
+      const data = await safeJson(res);
       if (!res.ok) {
         throw new Error(data?.error || 'Signup failed');
       }
@@ -185,13 +194,13 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
               {mode === 'signin' ? 'Sign In' : 'Create Account'}
             </CardTitle>
             <CardDescription className="text-base">
-              {mode === 'signin' 
+              {mode === 'signin'
                 ? 'Welcome back! Sign in to continue'
                 : 'Join us in making waste management smarter'
               }
             </CardDescription>
           </CardHeader>
-          
+
           <CardContent className="space-y-6">
             <div className="space-y-5">
               <div className="space-y-3">
@@ -203,8 +212,8 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
                 >
                   <div className="relative">
                     <RadioGroupItem value="collector" id="collector" className="peer sr-only" />
-                    <Label 
-                      htmlFor="collector" 
+                    <Label
+                      htmlFor="collector"
                       className="flex items-center justify-center gap-2 cursor-pointer rounded-lg border-2 border-gray-200 bg-white p-3 hover:bg-emerald-50 peer-data-[state=checked]:border-emerald-600 peer-data-[state=checked]:bg-emerald-50 transition-all"
                     >
                       <Users className="h-4 w-4" />
@@ -213,8 +222,8 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
                   </div>
                   <div className="relative">
                     <RadioGroupItem value="employee" id="employee" className="peer sr-only" />
-                    <Label 
-                      htmlFor="employee" 
+                    <Label
+                      htmlFor="employee"
                       className="flex items-center justify-center gap-2 cursor-pointer rounded-lg border-2 border-gray-200 bg-white p-3 hover:bg-emerald-50 peer-data-[state=checked]:border-emerald-600 peer-data-[state=checked]:bg-emerald-50 transition-all"
                     >
                       <Shield className="h-4 w-4" />
@@ -308,7 +317,7 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
                 </div>
               )}
 
-              <Button 
+              <Button
                 onClick={handleSubmit}
                 className="w-full h-11 bg-emerald-600 hover:bg-emerald-700 text-white font-medium shadow-lg hover:shadow-xl transition-all"
                 disabled={isLoading}

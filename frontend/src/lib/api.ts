@@ -1,26 +1,7 @@
-function normalizeBase(input?: string) {
-  const fallback =
-    window.location.hostname === "localhost"
-      ? "http://localhost:3000/api"
-      : "http://10.15.78.33:3000/api";
-
-  if (!input || !String(input).trim()) return fallback;
-  let base = String(input).trim();
-  if (!/^https?:\/\//i.test(base)) {
-    base = `http://${base}`;
-  }
-  try {
-    const url = new URL(base);
-    let href = url.href;
-    if (href.endsWith('/')) href = href.replace(/\/+$/, '');
-    return href;
-  } catch {
-    return fallback;
-  }
-}
-
-// export const API_BASE = normalizeBase(import.meta.env.VITE_API_BASE);
-export const API_BASE = "/api";
+export const API_BASE =
+  import.meta.env.PROD
+    ? `${import.meta.env.VITE_API_URL}/api`
+    : "/api";
 
 
 export class ApiError extends Error {
@@ -71,5 +52,3 @@ export async function apiFetch(path: string, options: ApiOptions = {}) {
 
   return response;
 }
-
-

@@ -1,32 +1,93 @@
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { Camera, MapPin, Upload } from "lucide-react";
 import Navigation from "@/components/layout/Navigation";
-import { NavLink } from "react-router-dom";
+import { apiFetch } from "@/lib/api";
+import { useToast } from "@/hooks/use-toast";
+import { getReliableLocation } from "@/lib/location";
 
 const AddDustbin = () => {
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const { toast } = useToast();
   const [image, setImage] = useState<string | null>(null);
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [locationLoading, setLocationLoading] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [manualMode, setManualMode] = useState(false);
+  const [manualLat, setManualLat] = useState("");
+  const [manualLng, setManualLng] = useState("");
+
+  // Check for coordinates in URL
+  useEffect(() => {
+    const latParam = searchParams.get('lat');
+    const lngParam = searchParams.get('lng');
+    if (latParam && lngParam) {
+      const lat = parseFloat(latParam);
+      const lng = parseFloat(lngParam);
+      if (!isNaN(lat) && !isNaN(lng)) {
+        setLocation({ lat, lng });
+        setManualLat(latParam);
+        setManualLng(lngParam);
+        setManualMode(true);
+        toast({
+          title: "Location Set from Map",
+          description: `Using coordinates: ${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+        });
+      }
+    }
+  }, [searchParams, toast]);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // Get location
-  const getLocation = () => {
+  const getLocation = async () => {
     setLocationLoading(true);
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-        setLocationLoading(false);
-      },
-      () => {
-        setLocation({ lat: 0, lng: 0 });
-        setLocationLoading(false);
-      },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
-    );
+    try {
+      const coords = await getReliableLocation();
+      setLocation(coords);
+    } catch (err) {
+      toast({
+        title: "Location Error",
+        description: (err as Error)?.message || "Could not get your location. Please enable GPS or enter coordinates manually.",
+        variant: "destructive",
+      });
+    } finally {
+      setLocationLoading(false);
+    }
+  };
+
+  // Apply manual coordinates
+  const applyManualCoordinates = () => {
+    const lat = parseFloat(manualLat);
+    const lng = parseFloat(manualLng);
+    if (isNaN(lat) || isNaN(lng)) {
+      toast({
+        title: "Invalid Coordinates",
+        description: "Please enter valid latitude and longitude numbers.",
+        variant: "destructive",
+      });
+      return;
+    }
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      toast({
+        title: "Coordinates Out of Range",
+        description: "Latitude must be between -90 and 90. Longitude must be between -180 and 180.",
+        variant: "destructive",
+      });
+      return;
+    }
+    setLocation({ lat, lng });
+    toast({
+      title: "Coordinates Set",
+      description: `Location set to ${lat.toFixed(6)}, ${lng.toFixed(6)}`,
+    });
   };
 
   // Start rear camera
@@ -54,41 +115,95 @@ const AddDustbin = () => {
     }
   };
 
-  // Capture photo and location
+  // Stop camera
+  const stopCamera = () => {
+    if (videoRef.current && videoRef.current.srcObject) {
+      const stream = videoRef.current.srcObject as MediaStream;
+      stream.getTracks().forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+    }
+    setShowCamera(false);
+  };
+
+  // Capture photo and get location
   const capturePhoto = () => {
-    if (videoRef.current && canvasRef.current) {
-      const context = canvasRef.current.getContext("2d");
-      if (context) {
-        context.drawImage(videoRef.current, 0, 0, 320, 240);
-        const imageData = canvasRef.current.toDataURL("image/png");
-        setShowCamera(false);
-        // Stop camera stream
-        const stream = videoRef.current.srcObject as MediaStream;
-        if (stream) stream.getTracks().forEach(track => track.stop());
-        // Get location at the moment of photo capture
-        setLocationLoading(true);
-        navigator.geolocation.getCurrentPosition(
-          (pos) => {
-            setImage(imageData);
-            setLocation({ lat: pos.coords.latitude, lng: pos.coords.longitude });
-            setLocationLoading(false);
-          },
-          () => {
-            setImage(imageData);
-            setLocation({ lat: 0, lng: 0 });
-            setLocationLoading(false);
-          },
-          { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
-        );
-      }
+    if (!videoRef.current || !canvasRef.current) return;
+    const video = videoRef.current;
+    const canvas = canvasRef.current;
+    const context = canvas.getContext("2d");
+    if (!context) return;
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    context.drawImage(video, 0, 0);
+    const dataUrl = canvas.toDataURL("image/jpeg");
+    setImage(dataUrl);
+    stopCamera();
+    if (!manualMode) {
+      getLocation();
     }
   };
 
-  const handleSubmit = () => {
-    // Submit image and location to backend here
-    alert(`Dustbin added!\nLat: ${location?.lat}\nLng: ${location?.lng}`);
-    setImage(null);
-    setLocation(null);
+  // Handle file upload
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      setImage(reader.result as string);
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleSubmit = async () => {
+    if (!location || !image) {
+      toast({
+        title: "Missing Information",
+        description: "Please capture both photo and location before submitting.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    try {
+      setSubmitting(true);
+      await apiFetch('/dustbins', {
+        method: 'POST',
+        body: JSON.stringify({
+          name: `Dustbin at ${location.lat.toFixed(4)}, ${location.lng.toFixed(4)}`,
+          sector: 'Unknown',
+          type: 'mixed',
+          capacityLiters: undefined,
+          coordinates: {
+            lat: location.lat,
+            lng: location.lng,
+          },
+          description: undefined,
+          status: 'active',
+          fillLevel: 0,
+          lastEmptiedAt: null,
+          photoBase64: image,
+          verificationRadius: 1.0,
+        })
+      });
+      toast({
+        title: "Success",
+        description: "Dustbin added successfully",
+      });
+      setImage(null);
+      setLocation(null);
+      setManualLat("");
+      setManualLng("");
+      setManualMode(false);
+      navigate('/employee/dashboard');
+    } catch (error: unknown) {
+      toast({
+        title: "Error",
+        description: (error as Error)?.message || "Failed to add dustbin. Please try again.",
+        variant: "destructive"
+      });
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -121,15 +236,35 @@ const AddDustbin = () => {
                     className="w-full h-48 flex items-center justify-center border-2 border-dashed border-eco-forest-primary/40 rounded-lg bg-muted/40 mb-4 relative"
                   >
                     {!showCamera && !image && (
-                      <Button
-                        onClick={startCamera}
-                        variant="outline"
-                        className="flex flex-col items-center justify-center w-full h-full bg-transparent border-0 shadow-none"
-                      >
-                        <Camera className="h-10 w-10 mb-2 text-eco-forest-primary" />
-                        <span className="font-medium text-eco-forest-primary">Capture Dustbin Photo</span>
-                        <span className="text-xs text-muted-foreground">Tap to open camera</span>
-                      </Button>
+                      <div className="flex flex-col gap-3 w-full h-full items-center justify-center px-4">
+                        <Button
+                          onClick={startCamera}
+                          variant="outline"
+                          className="flex flex-col items-center justify-center h-24 bg-transparent border-0 shadow-none"
+                        >
+                          <Camera className="h-10 w-10 mb-2 text-eco-forest-primary" />
+                          <span className="font-medium text-eco-forest-primary">Capture Photo</span>
+                          <span className="text-xs text-muted-foreground">
+                            Use device camera{!manualMode && " and GPS"}
+                          </span>
+                        </Button>
+                        <div className="text-muted-foreground text-xs">or</div>
+                        <Button
+                          onClick={() => fileInputRef.current?.click()}
+                          variant="outline"
+                          className="w-full"
+                        >
+                          <Upload className="mr-2 h-4 w-4" />
+                          Upload from Device
+                        </Button>
+                        <input
+                          ref={fileInputRef}
+                          type="file"
+                          accept="image/*"
+                          className="hidden"
+                          onChange={handleFileUpload}
+                        />
+                      </div>
                     )}
                     {showCamera && (
                       <div className="flex flex-col items-center w-full">
@@ -155,7 +290,7 @@ const AddDustbin = () => {
                           className="w-full mt-2"
                         >
                           <Camera className="mr-2 h-4 w-4" />
-                          Take Photo & Get Location
+                          Take Photo{!manualMode && " & Get Location"}
                         </Button>
                       </div>
                     )}
@@ -179,6 +314,54 @@ const AddDustbin = () => {
                     {locationLoading && (
                       <div className="text-xs text-eco-forest-primary mt-2">Getting current location...</div>
                     )}
+                    {/* Manual Coordinates (always visible) and mode toggle */}
+                    <div className="mt-3 space-y-2">
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setManualMode(!manualMode)}
+                        className="text-xs text-eco-forest-primary hover:bg-eco-forest-primary/10"
+                      >
+                        {manualMode ? "Use GPS automatically" : "Use manual coordinates (no GPS)"}
+                      </Button>
+
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor="manualLat" className="text-xs">Latitude:</Label>
+                          <Input
+                            id="manualLat"
+                            type="number"
+                            step="any"
+                            placeholder="e.g. 19.0760"
+                            value={manualLat}
+                            onChange={(e) => setManualLat(e.target.value)}
+                            className="h-7 text-xs"
+                          />
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Label htmlFor="manualLng" className="text-xs">Longitude:</Label>
+                          <Input
+                            id="manualLng"
+                            type="number"
+                            step="any"
+                            placeholder="e.g. 72.8777"
+                            value={manualLng}
+                            onChange={(e) => setManualLng(e.target.value)}
+                            className="h-7 text-xs"
+                          />
+                        </div>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={applyManualCoordinates}
+                          className="text-xs"
+                          disabled={!manualLat || !manualLng}
+                        >
+                          Apply Coordinates
+                        </Button>
+                      </div>
+                    </div>
                   </div>
                 </div>
                 {/* Instructions */}
@@ -195,6 +378,8 @@ const AddDustbin = () => {
                     <h4 className="font-medium mb-2">Why location?</h4>
                     <p className="text-xs text-muted-foreground">
                       The captured coordinates will be used to verify waste disposal by collectors.
+                      {!manualMode && " Your device's GPS will be used automatically."}
+                      {manualMode && " Enter coordinates manually if GPS is unavailable."}
                     </p>
                   </div>
                 </div>
@@ -203,12 +388,12 @@ const AddDustbin = () => {
               {image && (
                 <Button
                   onClick={handleSubmit}
-                  variant="success"
+                  variant="eco"
                   className="w-full mt-6"
-                  disabled={locationLoading || !location}
+                  disabled={locationLoading || !location || submitting}
                 >
                   <Upload className="mr-2 h-4 w-4" />
-                  Submit Dustbin
+                  {submitting ? 'Submitting...' : 'Submit Dustbin'}
                 </Button>
               )}
             </CardContent>

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import Navigation from '@/components/layout/Navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -19,53 +19,111 @@ import {
   Leaf,
   Award
 } from 'lucide-react';
+import { apiFetch } from '@/lib/api';
 
 const ProgressPage = () => {
   const userType = localStorage.getItem('userType') as 'collector' | 'employee';
   const [selectedPeriod, setSelectedPeriod] = useState('month');
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [employeeDash, setEmployeeDash] = useState<null | {
+    reports: {
+      pendingCount: number;
+      approvedToday: number;
+      totalReports: number;
+      approvedTotal?: number;
+      rejectedTotal?: number;
+      monthlySeries?: Array<{ month: string; points: number; reports: number }>;
+      weeklySeries?: Array<{ week: string; points: number; reports: number }>;
+      recentReports?: Array<{ id: string; status: 'pending'|'approved'|'rejected'; collectorEmail?: string; points: number; submittedAt: string; verificationComment?: string }>
+    };
+    collectors: { activeCollectors: number };
+  }>(null);
+
+  const [community, setCommunity] = useState<null | {
+    stats: {
+      totalMembers: number;
+      activeToday: number;
+      wasteCollectedKg: number;
+      co2SavedKg: number;
+      totalPoints: number;
+    };
+    leaderboard: Array<{ name: string; email: string; points: number }>;
+  }>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    (async () => {
+      try {
+        const [resEmp, resCom] = await Promise.all([
+          apiFetch('/dashboard/employee'),
+          apiFetch('/dashboard/community')
+        ]);
+        const json = await resEmp.json();
+        const jsonCom = await resCom.json();
+        if (!mounted) return;
+        setEmployeeDash({
+          reports: {
+            pendingCount: json?.reports?.pendingCount || 0,
+            approvedToday: json?.reports?.approvedToday || 0,
+            totalReports: json?.reports?.totalReports || 0,
+            approvedTotal: json?.reports?.approvedTotal || 0,
+            rejectedTotal: json?.reports?.rejectedTotal || 0,
+            monthlySeries: json?.reports?.monthlySeries || [],
+            weeklySeries: json?.reports?.weeklySeries || [],
+            recentReports: json?.reports?.recentReports || []
+          },
+          collectors: {
+            activeCollectors: json?.collectors?.activeCollectors || 0,
+          }
+        });
+        setCommunity({
+          stats: {
+            totalMembers: jsonCom?.stats?.totalMembers || 0,
+            activeToday: jsonCom?.stats?.activeToday || 0,
+            wasteCollectedKg: jsonCom?.stats?.wasteCollectedKg || 0,
+            co2SavedKg: jsonCom?.stats?.co2SavedKg || 0,
+            totalPoints: jsonCom?.stats?.totalPoints || 0,
+          },
+          leaderboard: (jsonCom?.leaderboard || []).map((l: { name: string; email: string; points: number }) => ({
+            name: l.name,
+            email: l.email,
+            points: l.points
+          }))
+        });
+      } catch (e: unknown) {
+        if (!mounted) return;
+        setError((e as Error)?.message || 'Failed to load progress data');
+      } finally {
+        if (mounted) setIsLoading(false);
+      }
+    })();
+    return () => { mounted = false; };
+  }, []);
   const [selectedSector, setSelectedSector] = useState('all');
 
-  const overviewStats = {
-    totalWasteCollected: 4850,
-    activeCollectors: 89,
-    verifiedReports: 324,
-    avgResponseTime: 2.3,
-    monthlyGoal: 5000,
-    currentProgress: 97
-  };
+  const totalReports = employeeDash?.reports.totalReports ?? 0;
+  const approvedToday = employeeDash?.reports.approvedToday ?? 0;
+  const pendingCount = employeeDash?.reports.pendingCount ?? 0;
+  const activeCollectors = employeeDash?.collectors.activeCollectors ?? 0;
+  const progressPercent = totalReports ? Math.min((approvedToday / totalReports) * 100, 100) : 0;
 
-  const sectorData = [
-    { sector: 'Sector 8', waste: 980, collectors: 18, efficiency: 92, goal: 1000 },
-    { sector: 'Sector 12', waste: 1150, collectors: 22, efficiency: 88, goal: 1200 },
-    { sector: 'Sector 15', waste: 856, collectors: 16, efficiency: 95, goal: 900 },
-    { sector: 'Sector 18', waste: 1234, collectors: 19, efficiency: 89, goal: 1300 },
-    { sector: 'Sector 22', waste: 630, collectors: 14, efficiency: 85, goal: 600 },
-  ];
+  const recentReports = employeeDash?.reports.recentReports || [];
 
-  const wasteTypeData = [
-    { type: 'Mixed Plastic', amount: 1450, percentage: 30, trend: '+12%' },
-    { type: 'Organic Waste', amount: 1260, percentage: 26, trend: '+8%' },
-    { type: 'Paper & Cardboard', amount: 980, percentage: 20, trend: '+15%' },
-    { type: 'Glass', amount: 730, percentage: 15, trend: '+5%' },
-    { type: 'Metal', amount: 430, percentage: 9, trend: '-2%' },
-  ];
+  const wasteTypeData: Array<{ type: string; amount: number; percentage: number; trend: string }> = [];
 
-  const monthlyTrend = [
-    { month: 'Aug', collected: 3200, target: 4000 },
-    { month: 'Sep', collected: 3800, target: 4200 },
-    { month: 'Oct', collected: 4200, target: 4500 },
-    { month: 'Nov', collected: 4650, target: 4800 },
-    { month: 'Dec', collected: 4850, target: 5000 },
-    { month: 'Jan', collected: 1200, target: 5200 },
-  ];
+  const monthlyTrend = (employeeDash?.reports.monthlySeries || []).map(m => ({
+    month: m.month,
+    collected: m.reports,
+    target: Math.max(m.reports, Math.round((totalReports || 1) / 6))
+  }));
 
-  const topPerformers = [
-    { name: 'Pratik Warke', collections: 45, weight: 342, efficiency: 98 },
-    { name: 'Tejas Suryawanshi', collections: 42, weight: 318, efficiency: 95 },
-    { name: 'Snehal bhole', collections: 38, weight: 295, efficiency: 94 },
-    { name: 'Ansh Singh', collections: 35, weight: 278, efficiency: 92 },
-    { name: 'Kartik Patil', collections: 33, weight: 256, efficiency: 91 },
-  ];
+  const topPerformers = (community?.leaderboard || []).slice(0, 5).map((u, idx) => ({
+    name: u.name,
+    email: u.email,
+    points: u.points,
+    rank: idx + 1
+  }));
 
   const getEfficiencyColor = (efficiency: number) => {
     if (efficiency >= 95) return 'text-eco-success';
@@ -77,6 +135,134 @@ const ProgressPage = () => {
     if (trend.startsWith('+')) return 'text-eco-success';
     if (trend.startsWith('-')) return 'text-destructive';
     return 'text-muted-foreground';
+  };
+
+  const exportPdf = async () => {
+    // Lazy-load PDF libs to avoid bundling errors
+    const { jsPDF } = await import('jspdf');
+    const autoTable = (await import('jspdf-autotable')).default;
+    const doc = new jsPDF();
+
+    // Fetch fresh data for real-time PDF
+    let liveEmp: { 
+      reports: { 
+        weeklySeries: { week: string; reports: number; points: number }[]; 
+        monthlySeries: { month: string; reports: number; points: number }[];
+        totalReports?: number;
+        approvedToday?: number;
+        pendingCount?: number;
+      }; 
+      collectors?: unknown;
+    } | null = null;
+    let liveCom: { 
+      stats: { 
+        totalMembers?: number;
+        activeToday?: number;
+        wasteCollectedKg?: number;
+        co2SavedKg?: number;
+        totalPoints?: number;
+      };
+      leaderboard: { name: string; email: string; points: number }[] 
+    } | null = null;
+    try {
+      const [resEmp, resCom] = await Promise.all([
+        apiFetch('/dashboard/employee'),
+        apiFetch('/dashboard/community')
+      ]);
+      liveEmp = await resEmp.json();
+      liveCom = await resCom.json();
+    } catch (e) {
+      // fall back to current state if live fetch fails
+      liveEmp = { 
+        reports: {
+          weeklySeries: employeeDash?.reports?.weeklySeries || [],
+          monthlySeries: employeeDash?.reports?.monthlySeries || [],
+          totalReports: employeeDash?.reports?.totalReports,
+          approvedToday: employeeDash?.reports?.approvedToday,
+          pendingCount: employeeDash?.reports?.pendingCount
+        }, 
+        collectors: employeeDash?.collectors || {} 
+      };
+      liveCom = { 
+        stats: {
+          totalMembers: community?.stats?.totalMembers,
+          activeToday: community?.stats?.activeToday,
+          wasteCollectedKg: community?.stats?.wasteCollectedKg,
+          co2SavedKg: community?.stats?.co2SavedKg,
+          totalPoints: community?.stats?.totalPoints
+        }, 
+        leaderboard: community?.leaderboard || [] 
+      };
+    }
+
+    // Colors
+    const brand = { r: 16, g: 163, b: 127 }; // eco-forest primary-ish
+    const light = { r: 236, g: 253, b: 245 };
+
+    // Header banner
+    doc.setFillColor(brand.r, brand.g, brand.b);
+    doc.rect(0, 0, 210, 30, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFontSize(18);
+    const periodTitle = selectedPeriod === 'week' ? 'Weekly' : selectedPeriod === 'month' ? 'Monthly' : selectedPeriod === 'quarter' ? 'Quarterly' : 'Yearly';
+    doc.text(`Ecowaste ${periodTitle} Report`, 14, 18);
+    doc.setFontSize(11);
+    doc.text(new Date().toLocaleString(), 160, 18, { align: 'right' });
+
+    // KPI badges area background
+    doc.setFillColor(light.r, light.g, light.b);
+    doc.rect(10, 35, 190, 22, 'F');
+    doc.setTextColor(0, 0, 0);
+    doc.setFontSize(11);
+    const kpis = [
+      `Total Reports: ${liveEmp?.reports?.totalReports || 0}`,
+      `Approved Today: ${liveEmp?.reports?.approvedToday || 0}`,
+      `Pending: ${liveEmp?.reports?.pendingCount || 0}`,
+      `Waste: ${(liveCom?.stats?.wasteCollectedKg || 0).toLocaleString()} kg`,
+      `CO2 Saved: ${(liveCom?.stats?.co2SavedKg || 0).toLocaleString()} kg`
+    ];
+    let x = 16;
+    kpis.forEach((k) => {
+      doc.text(k, x, 48);
+      x += 38;
+    });
+
+    // Build table data by period
+    let head: string[] = [];
+    let body: Array<(string | number)>[] = [];
+    if (selectedPeriod === 'week') {
+      head = ['Week', 'Approved Reports', 'Total Points'];
+      body = (liveEmp?.reports?.weeklySeries || []).map((w: { week: string; reports: number; points: number }) => [w.week, w.reports, w.points]);
+    } else if (selectedPeriod === 'month') {
+      head = ['Month', 'Approved Reports', 'Total Points'];
+      body = (liveEmp?.reports?.monthlySeries || []).map((m: { month: string; reports: number; points: number }) => [m.month, m.reports, m.points]);
+    } else if (selectedPeriod === 'quarter') {
+      head = ['Month', 'Approved Reports', 'Total Points'];
+      const months = (liveEmp?.reports?.monthlySeries || []).slice(-3);
+      body = months.map((m: { month: string; reports: number; points: number }) => [m.month, m.reports, m.points]);
+    } else {
+      head = ['Month', 'Approved Reports', 'Total Points'];
+      const months = (liveEmp?.reports?.monthlySeries || []).slice(-6);
+      body = months.map((m: { month: string; reports: number; points: number }) => [m.month, m.reports, m.points]);
+    }
+
+    // Styled table
+    autoTable(doc, {
+      startY: 65,
+      head: [head],
+      body,
+      styles: { fontSize: 10, cellPadding: 3 },
+      headStyles: { fillColor: [brand.r, brand.g, brand.b], textColor: 255, fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [245, 250, 247] },
+      theme: 'grid'
+    });
+
+    // Footer
+    const finalY = (doc as any).lastAutoTable?.finalY || 75; // eslint-disable-line @typescript-eslint/no-explicit-any
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text('Generated by Ecowaste • Data reflects approved reports in the selected period.', 14, finalY + 10);
+    doc.save(`ecowaste-${periodTitle.toLowerCase()}-report.pdf`);
   };
 
   return (
@@ -103,7 +289,7 @@ const ProgressPage = () => {
                     <SelectItem value="year">This Year</SelectItem>
                   </SelectContent>
                 </Select>
-                <Button variant="secondary" className="bg-white/20 hover:bg-white/30 text-white border-white/30">
+                <Button onClick={exportPdf} variant="secondary" className="bg-white/20 hover:bg-white/30 text-white border-white/30">
                   <Download className="mr-2 h-4 w-4" />
                   Export
                 </Button>
@@ -111,7 +297,7 @@ const ProgressPage = () => {
             </div>
           </div>
 
-          {/* Overview Stats */}
+          {/* Overview Stats (Real data) */}
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
             <Card>
               <CardContent className="p-6">
@@ -120,9 +306,9 @@ const ProgressPage = () => {
                     <Recycle className="h-6 w-6 text-eco-forest-primary" />
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Total Collected</p>
-                    <p className="text-2xl font-bold">{overviewStats.totalWasteCollected.toLocaleString()}</p>
-                    <p className="text-xs text-muted-foreground">kg this month</p>
+                    <p className="text-sm text-muted-foreground">Total Reports</p>
+                    <p className="text-2xl font-bold">{isLoading ? '—' : totalReports}</p>
+                    <p className="text-xs text-muted-foreground">all time</p>
                   </div>
                 </div>
               </CardContent>
@@ -136,8 +322,8 @@ const ProgressPage = () => {
                   </div>
                   <div>
                     <p className="text-sm text-muted-foreground">Active Collectors</p>
-                    <p className="text-2xl font-bold text-eco-success">{overviewStats.activeCollectors}</p>
-                    <p className="text-xs text-muted-foreground">this month</p>
+                    <p className="text-2xl font-bold text-eco-success">{isLoading ? '—' : activeCollectors}</p>
+                    <p className="text-xs text-muted-foreground">today</p>
                   </div>
                 </div>
               </CardContent>
@@ -150,9 +336,9 @@ const ProgressPage = () => {
                     <Award className="h-6 w-6 text-eco-ocean" />
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Verified Reports</p>
-                    <p className="text-2xl font-bold text-eco-ocean">{overviewStats.verifiedReports}</p>
-                    <p className="text-xs text-muted-foreground">this month</p>
+                    <p className="text-sm text-muted-foreground">Approved Today</p>
+                    <p className="text-2xl font-bold text-eco-ocean">{isLoading ? '—' : approvedToday}</p>
+                    <p className="text-xs text-muted-foreground">today</p>
                   </div>
                 </div>
               </CardContent>
@@ -165,33 +351,33 @@ const ProgressPage = () => {
                     <Target className="h-6 w-6 text-eco-warning" />
                   </div>
                   <div>
-                    <p className="text-sm text-muted-foreground">Monthly Goal</p>
-                    <p className="text-2xl font-bold text-eco-warning">{overviewStats.currentProgress}%</p>
-                    <p className="text-xs text-muted-foreground">{overviewStats.monthlyGoal - overviewStats.totalWasteCollected}kg remaining</p>
+                    <p className="text-sm text-muted-foreground">Pending Reviews</p>
+                    <p className="text-2xl font-bold text-eco-warning">{isLoading ? '—' : pendingCount}</p>
+                    <p className="text-xs text-muted-foreground">waiting approval</p>
                   </div>
                 </div>
               </CardContent>
             </Card>
           </div>
 
-          {/* Monthly Goal Progress */}
+          {/* Progress (Approved Today vs Total Reports) */}
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Target className="h-5 w-5 text-eco-forest-primary" />
-                Monthly Goal Progress
+                Today's Approvals Progress
               </CardTitle>
               <CardDescription>
-                {overviewStats.totalWasteCollected.toLocaleString()}kg of {overviewStats.monthlyGoal.toLocaleString()}kg target achieved
+                {isLoading ? '—' : `${approvedToday} approved out of ${totalReports} total reports`}
               </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                <Progress value={overviewStats.currentProgress} className="h-4" />
+                <Progress value={progressPercent} className="h-4" />
                 <div className="flex justify-between text-sm text-muted-foreground">
-                  <span>Start: 0kg</span>
-                  <span>Current: {overviewStats.totalWasteCollected.toLocaleString()}kg</span>
-                  <span>Target: {overviewStats.monthlyGoal.toLocaleString()}kg</span>
+                  <span>Start: 0</span>
+                  <span>Current: {approvedToday}</span>
+                  <span>Total: {totalReports}</span>
                 </div>
               </div>
             </CardContent>
@@ -206,60 +392,38 @@ const ProgressPage = () => {
             </TabsList>
 
             <TabsContent value="sectors" className="space-y-6">
-              <div className="flex items-center gap-4">
-                <Select value={selectedSector} onValueChange={setSelectedSector}>
-                  <SelectTrigger className="w-48">
-                    <Filter className="mr-2 h-4 w-4" />
-                    <SelectValue placeholder="Filter by sector" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="all">All Sectors</SelectItem>
-                    <SelectItem value="sector-8">Sector 8</SelectItem>
-                    <SelectItem value="sector-12">Sector 12</SelectItem>
-                    <SelectItem value="sector-15">Sector 15</SelectItem>
-                    <SelectItem value="sector-18">Sector 18</SelectItem>
-                    <SelectItem value="sector-22">Sector 22</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <MapPin className="h-5 w-5 text-eco-forest-primary" />
-                    Sector Performance
+                    Recent Reports
                   </CardTitle>
                   <CardDescription>
-                    Waste collection performance across different sectors
+                    Latest submissions with current status
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-6">
-                    {sectorData.map((sector, index) => (
-                      <div key={index} className="space-y-3">
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-4">
-                            <h3 className="font-medium">{sector.sector}</h3>
-                            <Badge variant="outline">{sector.collectors} collectors</Badge>
+                  <div className="space-y-3">
+                    {recentReports.length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No recent reports.</p>
+                    ) : (
+                      recentReports.map((r) => (
+                        <div key={r.id} className="flex items-center justify-between p-3 rounded-lg border">
+                          <div>
+                            <p className="font-medium text-sm">Report #{r.id.toString().slice(-6)}</p>
+                            <p className="text-xs text-muted-foreground">
+                              {r.collectorEmail || 'Collector'} • {new Date(r.submittedAt).toLocaleString()}
+                            </p>
                           </div>
-                          <div className="flex items-center gap-4 text-sm">
-                            <span className="text-muted-foreground">
-                              {sector.waste}kg / {sector.goal}kg
-                            </span>
-                            <Badge variant={sector.efficiency >= 90 ? 'default' : 'secondary'}>
-                              {sector.efficiency}% efficiency
+                          <div className="flex items-center gap-2">
+                            <Badge variant={r.status === 'approved' ? 'default' : r.status === 'pending' ? 'secondary' : 'destructive'}>
+                              {r.status}
                             </Badge>
+                            <Badge variant="outline">+{r.points || 0} pts</Badge>
                           </div>
                         </div>
-                        <div className="space-y-2">
-                          <Progress value={(sector.waste / sector.goal) * 100} />
-                          <div className="flex justify-between text-xs text-muted-foreground">
-                            <span>Goal: {sector.goal}kg</span>
-                            <span>{((sector.waste / sector.goal) * 100).toFixed(0)}% achieved</span>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
+                      ))
+                    )}
                   </div>
                 </CardContent>
               </Card>
@@ -353,41 +517,36 @@ const ProgressPage = () => {
                     Top Performing Collectors
                   </CardTitle>
                   <CardDescription>
-                    Highest performing waste collectors this month
+                    Ranked by total approved points
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
-                  <div className="space-y-6">
-                    {topPerformers.map((performer, index) => (
-                      <div key={index} className="flex items-center justify-between p-4 bg-muted/50 rounded-lg">
-                        <div className="flex items-center gap-4">
-                          <div className="flex items-center justify-center w-10 h-10 bg-eco-forest-primary/10 rounded-full">
-                            <span className="font-bold text-eco-forest-primary">#{index + 1}</span>
+                  <div className="space-y-3">
+                    {(topPerformers || []).length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No collectors yet.</p>
+                    ) : (
+                      topPerformers.map((p) => (
+                        <div key={p.rank} className="flex items-center justify-between p-3 rounded-lg border">
+                          <div className="flex items-center gap-4">
+                            <div className="flex items-center justify-center w-10 h-10 bg-eco-forest-primary/10 rounded-full">
+                              <span className="font-bold text-eco-forest-primary">#{p.rank}</span>
+                            </div>
+                            <div>
+                              <h3 className="font-medium">{p.name}</h3>
+                              <p className="text-xs text-muted-foreground">{p.email}</p>
+                            </div>
                           </div>
-                          <div>
-                            <h3 className="font-medium">{performer.name}</h3>
-                            <p className="text-sm text-muted-foreground">
-                              {performer.collections} collections • {performer.weight}kg total
-                            </p>
-                          </div>
+                          <Badge variant="default">{p.points.toLocaleString()} pts</Badge>
                         </div>
-                        <div className="text-right">
-                          <Badge variant="default" className={getEfficiencyColor(performer.efficiency)}>
-                            {performer.efficiency}% efficiency
-                          </Badge>
-                          <p className="text-xs text-muted-foreground mt-1">
-                            Avg: {(performer.weight / performer.collections).toFixed(1)}kg per collection
-                          </p>
-                        </div>
-                      </div>
-                    ))}
+                      ))
+                    )}
                   </div>
                 </CardContent>
               </Card>
             </TabsContent>
           </Tabs>
 
-          {/* Summary Cards */}
+          {/* Summary Cards (Real data) */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <Card>
               <CardHeader>
@@ -398,16 +557,12 @@ const ProgressPage = () => {
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex justify-between">
-                  <span className="text-sm">CO₂ Reduced</span>
-                  <span className="font-bold text-eco-success">2.4 tons</span>
+                  <span className="text-sm">Waste Collected</span>
+                  <span className="font-bold text-eco-success">{isLoading ? '—' : (community?.stats.wasteCollectedKg ?? 0).toLocaleString()} kg</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-sm">Trees Saved</span>
-                  <span className="font-bold text-eco-success">156</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-sm">Water Saved</span>
-                  <span className="font-bold text-eco-success">12,400L</span>
+                  <span className="text-sm">CO₂ Saved</span>
+                  <span className="font-bold text-eco-success">{isLoading ? '—' : (community?.stats.co2SavedKg ?? 0).toLocaleString()} kg</span>
                 </div>
               </CardContent>
             </Card>
@@ -421,16 +576,16 @@ const ProgressPage = () => {
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex justify-between">
-                  <span className="text-sm">Avg Response Time</span>
-                  <span className="font-bold">{overviewStats.avgResponseTime}h</span>
+                  <span className="text-sm">Approved (All Time)</span>
+                  <span className="font-bold">{isLoading ? '—' : (employeeDash?.reports.approvedTotal ?? 0)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-sm">Verification Rate</span>
-                  <span className="font-bold text-eco-success">94%</span>
+                  <span className="text-sm">Rejected (All Time)</span>
+                  <span className="font-bold text-destructive">{isLoading ? '—' : (employeeDash?.reports.rejectedTotal ?? 0)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-sm">Collection Efficiency</span>
-                  <span className="font-bold text-eco-success">91%</span>
+                  <span className="text-sm">Pending Reviews</span>
+                  <span className="font-bold text-eco-warning">{isLoading ? '—' : pendingCount}</span>
                 </div>
               </CardContent>
             </Card>
@@ -444,16 +599,16 @@ const ProgressPage = () => {
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex justify-between">
-                  <span className="text-sm">Next Week Goal</span>
-                  <span className="font-bold">1,200kg</span>
+                  <span className="text-sm">Active Collectors Today</span>
+                  <span className="font-bold">{isLoading ? '—' : (community?.stats.activeToday ?? 0)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-sm">Monthly Target</span>
-                  <span className="font-bold">5,200kg</span>
+                  <span className="text-sm">Community Members</span>
+                  <span className="font-bold">{isLoading ? '—' : (community?.stats.totalMembers ?? 0)}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-sm">Quarterly Goal</span>
-                  <span className="font-bold">15,000kg</span>
+                  <span className="text-sm">Total Points Awarded</span>
+                  <span className="font-bold">{isLoading ? '—' : (community?.stats.totalPoints ?? 0).toLocaleString()}</span>
                 </div>
               </CardContent>
             </Card>

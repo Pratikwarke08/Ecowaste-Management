@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import Navigation from '@/components/layout/Navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -23,107 +23,337 @@ import {
   Globe,
   Eye
 } from 'lucide-react';
+import { apiFetch } from '@/lib/api';
+import { applyTheme } from '@/lib/theme';
+
+type NotificationsSettings = {
+  emailNotifications: boolean;
+  pushNotifications: boolean;
+  smsAlerts: boolean;
+  weeklyReports: boolean;
+  achievementAlerts: boolean;
+  maintenanceUpdates: boolean;
+};
+
+type PrivacySettings = {
+  profileVisibility: 'public' | 'community' | 'private';
+  locationSharing: boolean;
+  activityTracking: boolean;
+  dataAnalytics: boolean;
+};
+
+type PreferencesSettings = {
+  language: string;
+  theme: string;
+  currency: string;
+  timezone: string;
+};
+
+type UserProfilePayload = {
+  name?: string;
+  email?: string;
+  role?: string;
+  profile?: {
+    phone?: string;
+    address?: string;
+    bio?: string;
+    sector?: string;
+    aadhaarLast4?: string;
+    photoBase64?: string;
+  };
+  settings?: {
+    notifications?: NotificationsSettings;
+    privacy?: PrivacySettings;
+    preferences?: PreferencesSettings;
+  };
+  lastLoginAt?: string;
+  lastActiveAt?: string;
+  createdAt?: string;
+};
+
+type UserResponse = {
+  user: UserProfilePayload;
+};
+
+type ProfileState = {
+  name: string;
+  email: string;
+  phone: string;
+  aadhaar: string;
+  address: string;
+  bio: string;
+  sector: string;
+};
+
+const DEFAULT_PROFILE_STATE: ProfileState = {
+  name: '',
+  email: '',
+  phone: '',
+  aadhaar: '',
+  address: '',
+  bio: '',
+  sector: ''
+};
+
+const DEFAULT_NOTIFICATIONS_STATE: NotificationsSettings = {
+  emailNotifications: true,
+  pushNotifications: true,
+  smsAlerts: false,
+  weeklyReports: true,
+  achievementAlerts: true,
+  maintenanceUpdates: true
+};
+
+const DEFAULT_PRIVACY_STATE: PrivacySettings = {
+  profileVisibility: 'public',
+  locationSharing: true,
+  activityTracking: true,
+  dataAnalytics: true
+};
+
+const DEFAULT_PREFERENCES_STATE: PreferencesSettings = {
+  language: 'english',
+  theme: 'system',
+  currency: 'inr',
+  timezone: 'asia/kolkata'
+};
 
 const Settings = () => {
   const userType = localStorage.getItem('userType') as 'collector' | 'employee';
   const { toast } = useToast();
 
-  const [profile, setProfile] = useState({
-    name: '',
-    email: '',
-    phone: '',
-    aadhaar: '****-****-9171',
-    address: '',
-    bio: ''
-  });
+  const [profile, setProfile] = useState<ProfileState>(DEFAULT_PROFILE_STATE);
+
+  const [loading, setLoading] = useState(true);
+  const [userMeta, setUserMeta] = useState<{ role?: string; lastLoginAt?: string; lastActiveAt?: string; createdAt?: string } | null>(null);
+  const [isProfileSaving, setIsProfileSaving] = useState(false);
 
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
 
+  const applyUserToState = useCallback((userData?: UserProfilePayload | null) => {
+    if (!userData) return;
+    const aadhaarLast4 = userData.profile?.aadhaarLast4;
+    setProfile({
+      name: userData.name ?? '',
+      email: userData.email ?? '',
+      phone: userData.profile?.phone ?? '',
+      aadhaar: aadhaarLast4 ?? '',
+      address: userData.profile?.address ?? '',
+      bio: userData.profile?.bio ?? '',
+      sector: userData.profile?.sector ?? ''
+    });
+    setProfilePhoto(userData.profile?.photoBase64 ?? null);
+    setNotifications({
+      ...DEFAULT_NOTIFICATIONS_STATE,
+      ...(userData.settings?.notifications ?? {})
+    });
+    setPrivacy({
+      ...DEFAULT_PRIVACY_STATE,
+      ...(userData.settings?.privacy ?? {})
+    });
+    setPreferences({
+      ...DEFAULT_PREFERENCES_STATE,
+      ...(userData.settings?.preferences ?? {})
+    });
+    // Apply theme from user preferences on load
+    applyTheme(userData.settings?.preferences?.theme);
+    setUserMeta({
+      role: userData.role,
+      lastLoginAt: userData.lastLoginAt,
+      lastActiveAt: userData.lastActiveAt,
+      createdAt: userData.createdAt
+    });
+    localStorage.setItem('user', JSON.stringify(userData));
+  }, []);
+
+  const formatDateTime = (value?: string) => {
+    if (!value) return '—';
+    try {
+      return new Date(value).toLocaleString();
+    } catch {
+      return value;
+    }
+  };
+
   // Load saved profile & photo on mount
   useEffect(() => {
-    const savedProfile = localStorage.getItem('profile');
-    if (savedProfile) {
-      setProfile(JSON.parse(savedProfile));
-    } else {
-      // default values if no saved profile
-      setProfile({
-        name: userType === 'collector' ? 'Pratik Warke' : 'Kalpesh Warke',
-        email: userType === 'collector' ? 'kalpeshwarke05@gmail.com' : 'kalpesh.warke@gov.in',
-        phone: '+91 9834171226',
-        aadhaar: '****-****-9171',
-        address: 'Sudhakar Nagar, Jalgaon, Maharashtra, India',
-        bio: userType === 'collector'
-          ? 'Passionate about environmental conservation'
-          : 'Dedicated government employee managing waste collection'
-      });
-    }
+    const fetchProfile = async () => {
+      try {
+        const res = await apiFetch('/users/me');
+        const data = (await res.json()) as UserResponse;
+        applyUserToState(data.user);
+      } catch (err) {
+        const error = err as Error & { status?: number; message?: string };
+        console.error(error);
+        if (error.status === 401) {
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          localStorage.removeItem('userType');
+          window.location.href = '/';
+        } else {
+          toast({
+            title: "Failed to load profile",
+            description: error.message || "Please try again later",
+            variant: "destructive",
+          });
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
 
-    const savedPhoto = localStorage.getItem('profilePhoto');
-    if (savedPhoto) setProfilePhoto(savedPhoto);
-  }, [userType]);
+    fetchProfile();
+  }, [toast, applyUserToState]);
 
   const handleSaveProfile = () => {
-    localStorage.setItem('profile', JSON.stringify(profile));
-    if (profilePhoto) {
-      localStorage.setItem('profilePhoto', profilePhoto);
+    const save = async () => {
+      try {
+        setIsProfileSaving(true);
+        const sanitizedAadhaar = profile.aadhaar.replace(/\D/g, '');
+        const payload = {
+          name: profile.name,
+          profile: {
+            phone: profile.phone,
+            address: profile.address,
+            bio: profile.bio,
+            sector: profile.sector,
+            aadhaarLast4: sanitizedAadhaar ? sanitizedAadhaar.slice(-4) : undefined,
+            photoBase64: profilePhoto ?? undefined
+          }
+        };
+        const res = await apiFetch('/users/me', {
+          method: 'PUT',
+          body: JSON.stringify(payload)
+        });
+        const data = (await res.json()) as UserResponse;
+        applyUserToState(data.user);
+        toast({
+          title: "Profile Updated",
+          description: "Your profile information has been saved successfully.",
+        });
+      } catch (err) {
+        const error = err as Error & { status?: number; message?: string };
+        console.error(error);
+        if (error.status === 401) {
+          await handleLogout();
+        } else {
+          toast({
+            title: "Update Failed",
+            description: error.message || "Unable to update profile",
+            variant: "destructive",
+          });
+        }
+      } finally {
+        setIsProfileSaving(false);
+      }
+    };
+    save();
+  };
+
+  const [notifications, setNotifications] = useState<NotificationsSettings>(DEFAULT_NOTIFICATIONS_STATE);
+
+  const [privacy, setPrivacy] = useState<PrivacySettings>(DEFAULT_PRIVACY_STATE);
+
+  const [preferences, setPreferences] = useState<PreferencesSettings>(DEFAULT_PREFERENCES_STATE);
+
+  const handleSaveNotifications = async () => {
+    try {
+      const res = await apiFetch('/users/me', {
+        method: 'PUT',
+        body: JSON.stringify({ settings: { notifications } })
+      });
+      const data = (await res.json()) as UserResponse;
+      applyUserToState(data.user);
+      toast({
+        title: "Notification Settings Updated",
+        description: "Your notification preferences have been saved.",
+      });
+    } catch (err) {
+      const error = err as Error & { status?: number; message?: string };
+      console.error(error);
+      if (error.status === 401) {
+        await handleLogout();
+      } else {
+        toast({
+          title: "Update Failed",
+          description: error.message || "Unable to update notifications",
+          variant: "destructive",
+        });
+      }
     }
-    toast({
-      title: "Profile Updated",
-      description: "Your profile information has been saved successfully.",
-    });
   };
 
-  const [notifications, setNotifications] = useState({
-    emailNotifications: true,
-    pushNotifications: true,
-    smsAlerts: false,
-    weeklyReports: true,
-    achievementAlerts: true,
-    maintenanceUpdates: true
-  });
-
-  const [privacy, setPrivacy] = useState({
-    profileVisibility: 'public',
-    locationSharing: true,
-    activityTracking: true,
-    dataAnalytics: true
-  });
-
-  const [preferences, setPreferences] = useState({
-    language: 'english',
-    theme: 'system',
-    currency: 'inr',
-    timezone: 'asia/kolkata'
-  });
-
-  const handleSaveNotifications = () => {
-    toast({
-      title: "Notification Settings Updated",
-      description: "Your notification preferences have been saved.",
-    });
+  const handleSavePrivacy = async () => {
+    try {
+      const res = await apiFetch('/users/me', {
+        method: 'PUT',
+        body: JSON.stringify({ settings: { privacy } })
+      });
+      const data = (await res.json()) as UserResponse;
+      applyUserToState(data.user);
+      toast({
+        title: "Privacy Settings Updated",
+        description: "Your privacy preferences have been saved.",
+      });
+    } catch (err) {
+      const error = err as Error & { status?: number; message?: string };
+      console.error(error);
+      if (error.status === 401) {
+        await handleLogout();
+      } else {
+        toast({
+          title: "Update Failed",
+          description: error.message || "Unable to update privacy settings",
+          variant: "destructive",
+        });
+      }
+    }
   };
 
-  const handleSavePrivacy = () => {
-    toast({
-      title: "Privacy Settings Updated",
-      description: "Your privacy preferences have been saved.",
-    });
+  const handleSavePreferences = async () => {
+    try {
+      const res = await apiFetch('/users/me', {
+        method: 'PUT',
+        body: JSON.stringify({ settings: { preferences } })
+      });
+      const data = (await res.json()) as UserResponse;
+      applyUserToState(data.user);
+      // Apply theme after saving preferences
+      applyTheme(data.user.settings?.preferences?.theme);
+      toast({
+        title: "Preferences Updated",
+        description: "Your app preferences have been saved.",
+      });
+    } catch (err) {
+      const error = err as Error & { status?: number; message?: string };
+      console.error(error);
+      if (error.status === 401) {
+        await handleLogout();
+      } else {
+        toast({
+          title: "Update Failed",
+          description: error.message || "Unable to update preferences",
+          variant: "destructive",
+        });
+      }
+    }
   };
 
-  const handleSavePreferences = () => {
-    toast({
-      title: "Preferences Updated",
-      description: "Your app preferences have been saved.",
-    });
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem('userType');
-    toast({
-      title: "Logged Out",
-      description: "You have been successfully logged out.",
-    });
-    window.location.href = '/';
+  const handleLogout = async () => {
+    try {
+      await apiFetch('/auth/logout', { method: 'POST' });
+    } catch (err) {
+      console.error(err);
+    } finally {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      localStorage.removeItem('userType');
+      toast({
+        title: "Logged Out",
+        description: "You have been successfully logged out.",
+      });
+      window.location.href = '/';
+    }
   };
 
   const handleExportData = () => {
@@ -140,6 +370,23 @@ const Settings = () => {
       variant: "destructive",
     });
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background">
+        <Navigation userRole={userType} />
+        <main className="lg:ml-64 p-6">
+          <div className="max-w-4xl mx-auto">
+            <Card>
+              <CardContent className="p-6">
+                <div className="animate-pulse text-muted-foreground">Loading settings...</div>
+              </CardContent>
+            </Card>
+          </div>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -163,6 +410,44 @@ const Settings = () => {
 
             {/* Profile Tab */}
             <TabsContent value="profile" className="space-y-6">
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <User className="h-5 w-5 text-eco-forest-primary" />
+                    Account Overview
+                  </CardTitle>
+                  <CardDescription>Your login details and account activity</CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <Label className="text-xs text-muted-foreground uppercase">Account Email</Label>
+                      <p className="text-sm font-medium">{profile.email || '—'}</p>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground uppercase">Role</Label>
+                      <p className="text-sm font-medium capitalize">{userMeta?.role ?? userType}</p>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground uppercase">Last Login</Label>
+                      <p className="text-sm font-medium">{formatDateTime(userMeta?.lastLoginAt)}</p>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground uppercase">Last Active</Label>
+                      <p className="text-sm font-medium">{formatDateTime(userMeta?.lastActiveAt)}</p>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground uppercase">Member Since</Label>
+                      <p className="text-sm font-medium">{formatDateTime(userMeta?.createdAt)}</p>
+                    </div>
+                    <div>
+                      <Label className="text-xs text-muted-foreground uppercase">Aadhaar (Last 4)</Label>
+                      <p className="text-sm font-medium">{profile.aadhaar ? `****-****-${profile.aadhaar}` : '—'}</p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
@@ -193,7 +478,6 @@ const Settings = () => {
                           reader.onload = ev => {
                             const result = ev.target?.result as string;
                             setProfilePhoto(result);
-                            localStorage.setItem('profilePhoto', result); // Save immediately
                           };
                           reader.readAsDataURL(file);
                         }
@@ -225,7 +509,8 @@ const Settings = () => {
                         id="email"
                         type="email"
                         value={profile.email}
-                        onChange={(e) => setProfile({...profile, email: e.target.value})}
+                        readOnly
+                        className="pl-10 h-11 bg-muted"
                       />
                     </div>
 
@@ -239,12 +524,16 @@ const Settings = () => {
                     </div>
 
                     <div className="space-y-2">
-                      <Label htmlFor="aadhaar">Aadhaar Number</Label>
+                      <Label htmlFor="aadhaar">Aadhaar (Last 4 digits)</Label>
                       <Input
                         id="aadhaar"
                         value={profile.aadhaar}
-                        disabled
-                        className="bg-muted"
+                        maxLength={4}
+                        placeholder="1234"
+                        onChange={(e) => {
+                          const digits = e.target.value.replace(/\\D/g, '').slice(0, 4);
+                          setProfile({ ...profile, aadhaar: digits });
+                        }}
                       />
                     </div>
 
@@ -254,6 +543,16 @@ const Settings = () => {
                         id="address"
                         value={profile.address}
                         onChange={(e) => setProfile({...profile, address: e.target.value})}
+                      />
+                    </div>
+
+                    <div className="space-y-2 md:col-span-2">
+                      <Label htmlFor="sector">Assigned Sector / Area</Label>
+                      <Input
+                        id="sector"
+                        value={profile.sector}
+                        onChange={(e) => setProfile({ ...profile, sector: e.target.value })}
+                        placeholder="e.g., Sector 12, Ward 5"
                       />
                     </div>
 
@@ -416,7 +715,7 @@ const Settings = () => {
                       <Label>Profile Visibility</Label>
                       <Select 
                         value={privacy.profileVisibility} 
-                        onValueChange={(value) => setPrivacy({...privacy, profileVisibility: value})}
+                        onValueChange={(value: "community" | "public" | "private") => setPrivacy({...privacy, profileVisibility: value})}
                       >
                         <SelectTrigger>
                           <Eye className="mr-2 h-4 w-4" />
@@ -539,7 +838,11 @@ const Settings = () => {
                       <Label>Theme</Label>
                       <Select 
                         value={preferences.theme} 
-                        onValueChange={(value) => setPreferences({...preferences, theme: value})}
+                        onValueChange={(value) => {
+                          setPreferences({...preferences, theme: value});
+                          // Apply immediately when user changes theme
+                          applyTheme(value);
+                        }}
                       >
                         <SelectTrigger>
                           <SelectValue />

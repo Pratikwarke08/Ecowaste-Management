@@ -11,18 +11,27 @@ const upload = multer({ storage });
 // ✅ Route: Upload photo
 router.post("/upload", upload.single("photo"), async (req, res) => {
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: "No file uploaded" });
+    let saved;
+    if (req.file) {
+      const newPhoto = new Photo({
+        filename: req.file.originalname,
+        contentType: req.file.mimetype,
+        imageBase64: req.file.buffer.toString("base64"),
+      });
+      saved = await newPhoto.save();
+    } else if (req.body && req.body.imageBase64) {
+      const { imageBase64, filename, contentType } = req.body;
+      const newPhoto = new Photo({
+        filename: filename || `image_${Date.now()}.png`,
+        contentType: contentType || "image/png",
+        imageBase64,
+      });
+      saved = await newPhoto.save();
+    } else {
+      return res.status(400).json({ error: "No file uploaded or imageBase64 provided" });
     }
 
-    const newPhoto = new Photo({
-      filename: req.file.originalname,
-      contentType: req.file.mimetype,
-      imageBase64: req.file.buffer.toString("base64"),
-    });
-
-    await newPhoto.save();
-    res.json({ message: "Photo uploaded successfully!" });
+    res.json({ message: "Photo uploaded successfully!", photoId: saved._id });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: "Upload failed" });

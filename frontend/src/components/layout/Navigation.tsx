@@ -12,7 +12,12 @@ import {
   Menu,
   X,
   Recycle,
-  Shield
+  Shield,
+  MessageSquare,
+  AlertTriangle,
+  HeartHandshake,
+  Leaf,
+  Map
 } from 'lucide-react';
 
 interface NavigationProps {
@@ -26,15 +31,23 @@ const Navigation = ({ userRole }: NavigationProps) => {
   const collectorNavItems = [
     { href: '/dashboard', label: 'Dashboard', icon: Home },
     { href: '/capture', label: 'Capture Waste', icon: Camera },
+    { href: '/capture-incident', label: 'Capture Incidents', icon: AlertTriangle },
     { href: '/rewards', label: 'My Rewards', icon: Award },
+    { href: '/keep-alive', label: 'Keep Me Alive', icon: HeartHandshake },
+    { href: '/complaints', label: 'Complaints', icon: MessageSquare },
     { href: '/community', label: 'Community', icon: Users },
     { href: '/settings', label: 'Settings', icon: Settings },
+    { href: '/smog-tower', label: 'Smog Tower', icon: Leaf },
+
   ];
 
   const employeeNavItems = [
     { href: '/dashboard', label: 'Dashboard', icon: Home },
+    { href: '/map', label: 'Map View', icon: Map },
     { href: '/dustbins', label: 'Manage Dustbins', icon: MapPin },
+    { href: '/incidents', label: 'Incidents', icon: AlertTriangle },
     { href: '/verify', label: 'Verify Reports', icon: Shield },
+    { href: '/complaints', label: 'Complaints', icon: MessageSquare },
     { href: '/progress', label: 'Progress Tracking', icon: Users },
     { href: '/settings', label: 'Settings', icon: Settings },
   ];

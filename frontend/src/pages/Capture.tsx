@@ -4,10 +4,13 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import Navigation from '@/components/layout/Navigation';
-import { 
-  Camera, 
-  MapPin, 
-  CheckCircle, 
+import { apiFetch } from '@/lib/api';
+import { getReliableLocation } from '@/lib/location';
+import DustbinMap, { Dustbin } from '@/components/map/DustbinMap';
+import {
+  Camera,
+  MapPin,
+  CheckCircle,
   AlertCircle,
   Upload,
   Trash2,
@@ -19,24 +22,16 @@ import {
   Map as MapIcon
 } from 'lucide-react';
 
-// Multiple dustbin locations for the map
-const DUSTBINS = [
-  { id: 1, lat: 12.9721, lng: 77.5950, name: 'Main Street Bin', type: 'Mixed' },
-  { id: 2, lat: 12.9716, lng: 77.5946, name: 'Park Bin', type: 'Organic' },
-  { id: 3, lat: 12.9726, lng: 77.5955, name: 'Market Bin', type: 'Plastic' },
-  { id: 4, lat: 12.9711, lng: 77.5941, name: 'School Bin', type: 'Paper' },
-];
-
 function getDistanceFromLatLonInMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
   const R = 6371e3;
-  const φ1 = lat1 * Math.PI/180;
-  const φ2 = lat2 * Math.PI/180;
-  const Δφ = (lat2-lat1) * Math.PI/180;
-  const Δλ = (lon2-lon1) * Math.PI/180;
-  const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) +
-            Math.cos(φ1) * Math.cos(φ2) *
-            Math.sin(Δλ/2) * Math.sin(Δλ/2);
-  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+  const φ1 = lat1 * Math.PI / 180;
+  const φ2 = lat2 * Math.PI / 180;
+  const Δφ = (lat2 - lat1) * Math.PI / 180;
+  const Δλ = (lon2 - lon1) * Math.PI / 180;
+  const a = Math.sin(Δφ / 2) * Math.sin(Δφ / 2) +
+    Math.cos(φ1) * Math.cos(φ2) *
+    Math.sin(Δλ / 2) * Math.sin(Δλ / 2);
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
 }
 
@@ -50,8 +45,21 @@ const Capture = () => {
   const [expandedImage, setExpandedImage] = useState<string | null>(null);
   const [showMap, setShowMap] = useState(false);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
-  const [selectedDustbin, setSelectedDustbin] = useState<typeof DUSTBINS[0] | null>(null);
+  const [selectedDustbin, setSelectedDustbin] = useState<Dustbin | null>(null);
   const [isTracking, setIsTracking] = useState(false);
+  const [activeDustbins, setActiveDustbins] = useState<Dustbin[]>([]);
+  const [loadingBins, setLoadingBins] = useState(false);
+  const [materialType, setMaterialType] = useState('');
+  const [wasteQuantityDescription, setWasteQuantityDescription] = useState('');
+  const [manualPickupImage, setManualPickupImage] = useState<string | null>(null);
+  const [manualDisposalImage, setManualDisposalImage] = useState<string | null>(null);
+  const [manualPickupLat, setManualPickupLat] = useState('');
+  const [manualPickupLng, setManualPickupLng] = useState('');
+  const [manualDisposalLat, setManualDisposalLat] = useState('');
+  const [manualDisposalLng, setManualDisposalLng] = useState('');
+  const [manualMaterialType, setManualMaterialType] = useState('');
+  const [manualWasteQuantityDescription, setManualWasteQuantityDescription] = useState('');
+  const [manualSubmitting, setManualSubmitting] = useState(false);
   const userType = localStorage.getItem('userType') as 'collector' | 'employee';
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -68,7 +76,7 @@ const Capture = () => {
             lng: pos.coords.longitude,
           });
         },
-        () => {},
+        () => { },
         { enableHighAccuracy: true, maximumAge: 1000 }
       );
     }
@@ -76,6 +84,39 @@ const Capture = () => {
       if (watchId) navigator.geolocation.clearWatch(watchId);
     };
   }, [isTracking]);
+
+  const locateUserOnMap = async () => {
+    try {
+      const coords = await getReliableLocation();
+      setUserLocation(coords);
+      setIsTracking(true);
+    } catch (e) {
+      const message = (e as Error)?.message || 'Unable to get your current location. Please check GPS and permissions.';
+      alert(message);
+    }
+  };
+
+  // Load dustbins from backend when map is opened
+  useEffect(() => {
+    const load = async () => {
+      if (!showMap) return;
+      try {
+        setLoadingBins(true);
+        const res = await apiFetch('/dustbins?status=all');
+        const bins = await res.json();
+        // Include all dustbins; backend already tags them with status.
+        // Map component will render whatever is provided.
+        setActiveDustbins(Array.isArray(bins) ? bins : []);
+      } catch {
+        setActiveDustbins([]);
+      } finally {
+        setLoadingBins(false);
+      }
+    };
+    load();
+  }, [showMap]);
+
+  // ML integration removed; manual verification flow only
 
   const startCamera = async (type: 'pickup' | 'disposal') => {
     setShowCamera(type);
@@ -89,8 +130,8 @@ const Capture = () => {
           videoRef.current.play();
         }
       } catch (err) {
-        const stream = await navigator.mediaDevices.getUserMedia({ 
-          video: { width: 1280, height: 720 } 
+        const stream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 1280, height: 720 }
         });
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
@@ -101,93 +142,181 @@ const Capture = () => {
   };
 
   const capturePhoto = (type: 'pickup' | 'disposal') => {
-    if (videoRef.current && canvasRef.current) {
-      const context = canvasRef.current.getContext('2d');
-      if (context) {
-        canvasRef.current.width = 640;
-        canvasRef.current.height = 480;
-        context.drawImage(videoRef.current, 0, 0, 640, 480);
-        const imageData = canvasRef.current.toDataURL('image/png');
+    if (!videoRef.current || !canvasRef.current) return;
+    const context = canvasRef.current.getContext('2d');
+    if (!context) return;
+
+    canvasRef.current.width = 640;
+    canvasRef.current.height = 480;
+    context.drawImage(videoRef.current, 0, 0, 640, 480);
+    const imageData = canvasRef.current.toDataURL('image/png');
+
+    const stream = videoRef.current.srcObject as MediaStream;
+    if (stream) {
+      stream.getTracks().forEach(track => track.stop());
+    }
+    setShowCamera(null);
+
+    // Only capture image here. GPS is fetched explicitly via Get GPS button
+    // to enforce: photo first, then compulsory location.
+    if (type === 'pickup') {
+      setPickupImage(imageData);
+    } else {
+      setDisposalImage(imageData);
+    }
+  };
+
+  const getCurrentLocation = async (type: 'pickup' | 'disposal') => {
+    try {
+      const coords = await getReliableLocation();
+
+      if (type === 'pickup') {
+        setPickupLocation(coords);
+        setUserLocation(coords);
+
+        if (!pickupImage) {
+          alert('Please capture the pickup photo before recording GPS location.');
+          return;
+        }
+        setStep('disposal');
+      } else {
+        if (!selectedDustbin) {
+          alert('Please choose the dustbin where you disposed the waste before proceeding.');
+          return;
+        }
+
+        const dist = getDistanceFromLatLonInMeters(
+            coords.lat, 
+            coords.lng, 
+            selectedDustbin.coordinates.lat, 
+            selectedDustbin.coordinates.lng
+        );
+
+        if (dist > 1) {
+            alert(`You are ${dist.toFixed(2)} meters away from the selected dustbin. You must be within 1 meter to verify disposal. Please move closer.`);
+            return;
+        }
+
+        setDisposalLocation(coords);
+        setUserLocation(coords);
+
+        if (!disposalImage) {
+          alert('Please capture the disposal photo before recording GPS location.');
+          return;
+        }
         
-        const stream = videoRef.current.srcObject as MediaStream;
-        if (stream) {
-          stream.getTracks().forEach(track => track.stop());
-        }
-        setShowCamera(null);
-
-        if (navigator.geolocation) {
-          navigator.geolocation.getCurrentPosition(
-            (pos) => {
-              const coords = {
-                lat: pos.coords.latitude,
-                lng: pos.coords.longitude,
-              };
-              if (type === 'pickup') {
-                setPickupImage(imageData);
-                setPickupLocation(coords);
-                setStep('disposal');
-              } else {
-                setDisposalImage(imageData);
-                setDisposalLocation(coords);
-                setStep('verify');
-              }
-            },
-            () => {
-              const coords = { lat: 12.9716, lng: 77.5946 };
-              if (type === 'pickup') {
-                setPickupImage(imageData);
-                setPickupLocation(coords);
-                setStep('disposal');
-              } else {
-                setDisposalImage(imageData);
-                setDisposalLocation(coords);
-                setStep('verify');
-              }
-            },
-            { enableHighAccuracy: true, maximumAge: 0 }
-          );
-        }
+        setStep('verify');
       }
+    } catch (e) {
+      const message = (e as Error)?.message || 'Unable to fetch GPS coordinates. Please check GPS and permissions.';
+      alert(message);
     }
   };
 
-  const getCurrentLocation = (type: 'pickup' | 'disposal') => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        (pos) => {
-          const coords = {
-            lat: pos.coords.latitude,
-            lng: pos.coords.longitude,
-          };
-          if (type === 'pickup') setPickupLocation(coords);
-          else setDisposalLocation(coords);
-          setUserLocation(coords);
-        },
-        () => {
-          const coords = { lat: 12.9716, lng: 77.5946 };
-          if (type === 'pickup') setPickupLocation(coords);
-          else setDisposalLocation(coords);
-        },
-        { enableHighAccuracy: true, maximumAge: 0 }
-      );
+  const submitReport = async () => {
+    try {
+      if (!pickupImage || !pickupLocation || !disposalImage || !disposalLocation) {
+        alert('Please capture both photos and locations before submitting.');
+        return;
+      }
+      if (!selectedDustbin) {
+        alert('Please select the dustbin where you disposed the waste before submitting.');
+        return;
+      }
+      const combinedMaterial = [materialType, wasteQuantityDescription]
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join(' | ');
+      const res = await apiFetch('/reports', {
+        method: 'POST',
+        body: JSON.stringify({
+          pickupImageBase64: pickupImage.replace(/^data:image\/\w+;base64,/, ''),
+          pickupLocation,
+          disposalImageBase64: disposalImage.replace(/^data:image\/\w+;base64,/, ''),
+          disposalLocation,
+          dustbinId: selectedDustbin._id,
+          materialType: combinedMaterial || undefined,
+        })
+      });
+      const data = await res.json();
+      alert(`🎉 Waste collection report submitted successfully! Awaiting manual verification.`);
+      setStep('pickup');
+      setPickupImage(null);
+      setPickupLocation(null);
+      setDisposalImage(null);
+      setDisposalLocation(null);
+      setSelectedDustbin(null);
+      setMaterialType('');
+      setWasteQuantityDescription('');
+    } catch (e: unknown) {
+      const errorMessage = (e as Error)?.message || 'Upload failed. Please try again.';
+      alert(errorMessage);
     }
   };
 
-  const submitReport = () => {
-    alert('🎉 Waste collection report submitted successfully! You earned 42 points!');
-    setStep('pickup');
-    setPickupImage(null);
-    setPickupLocation(null);
-    setDisposalImage(null);
-    setDisposalLocation(null);
+  const submitManualTestReport = async () => {
+    try {
+      if (!manualPickupImage || !manualDisposalImage) {
+        alert('Please select both pickup and disposal images for manual testing.');
+        return;
+      }
+      if (!manualPickupLat || !manualPickupLng || !manualDisposalLat || !manualDisposalLng) {
+        alert('Please enter pickup and disposal latitude/longitude values.');
+        return;
+      }
+
+      const pickupLat = parseFloat(manualPickupLat);
+      const pickupLng = parseFloat(manualPickupLng);
+      const disposalLat = parseFloat(manualDisposalLat);
+      const disposalLng = parseFloat(manualDisposalLng);
+
+      if (Number.isNaN(pickupLat) || Number.isNaN(pickupLng) || Number.isNaN(disposalLat) || Number.isNaN(disposalLng)) {
+        alert('Coordinates must be valid numbers.');
+        return;
+      }
+
+      const combinedManualMaterial = [manualMaterialType, manualWasteQuantityDescription]
+        .map((s) => s.trim())
+        .filter(Boolean)
+        .join(' | ');
+
+      setManualSubmitting(true);
+      await apiFetch('/reports', {
+        method: 'POST',
+        body: JSON.stringify({
+          pickupImageBase64: manualPickupImage.replace(/^data:image\/\w+;base64,/, ''),
+          pickupLocation: { lat: pickupLat, lng: pickupLng },
+          disposalImageBase64: manualDisposalImage.replace(/^data:image\/\w+;base64,/, ''),
+          disposalLocation: { lat: disposalLat, lng: disposalLng },
+          dustbinId: selectedDustbin?._id,
+          materialType: combinedManualMaterial || undefined,
+        }),
+      });
+
+      alert('✅ Test report submitted successfully (manual input).');
+      setManualPickupImage(null);
+      setManualDisposalImage(null);
+      setManualPickupLat('');
+      setManualPickupLng('');
+      setManualDisposalLat('');
+      setManualDisposalLng('');
+      setManualMaterialType('');
+      setManualWasteQuantityDescription('');
+    } catch (e: unknown) {
+      const errorMessage = (e as Error)?.message || 'Manual upload failed. Please try again.';
+      alert(errorMessage);
+    } finally {
+      setManualSubmitting(false);
+    }
   };
 
   const findNearestDustbin = (location: { lat: number; lng: number }) => {
-    let nearest = DUSTBINS[0];
-    let minDist = getDistanceFromLatLonInMeters(location.lat, location.lng, nearest.lat, nearest.lng);
-    
-    DUSTBINS.forEach(bin => {
-      const dist = getDistanceFromLatLonInMeters(location.lat, location.lng, bin.lat, bin.lng);
+    if (!activeDustbins.length) return null;
+    let nearest = activeDustbins[0];
+    let minDist = getDistanceFromLatLonInMeters(location.lat, location.lng, nearest.coordinates.lat, nearest.coordinates.lng);
+
+    activeDustbins.forEach(bin => {
+      const dist = getDistanceFromLatLonInMeters(location.lat, location.lng, bin.coordinates.lat, bin.coordinates.lng);
       if (dist < minDist) {
         minDist = dist;
         nearest = bin;
@@ -196,29 +325,31 @@ const Capture = () => {
     return { bin: nearest, distance: minDist };
   };
 
-  let nearestDustbin = null;
+  let nearestDustbin = null as null | { bin: Dustbin; distance: number };
   if (disposalLocation) {
-    nearestDustbin = findNearestDustbin(disposalLocation);
+    nearestDustbin = findNearestDustbin(disposalLocation) as { bin: Dustbin; distance: number } | null;
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-green-50 to-blue-50">
-      {/* Header with Navigation */}
-      <div className="bg-white shadow-sm border-b">
+    <div className="min-h-screen bg-background">
+      {/* Navigation Sidebar */}
+      <Navigation userRole={userType} />
+
+      {/* Header */}
+      <div className="bg-card shadow-sm border-b border-border lg:ml-64">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="bg-gradient-to-r from-green-600 to-blue-600 p-2 rounded-lg">
-                <Navigation userRole={userType} />
                 <Recycle className="h-6 w-6 text-white" />
               </div>
               <div>
-                <h1 className="text-xl font-bold text-gray-900">EcoCollect</h1>
-                <p className="text-sm text-gray-500">Smart Waste Management</p>
+                <h1 className="text-xl font-bold text-foreground">EcoCollect</h1>
+                <p className="text-sm text-muted-foreground">Smart Waste Management</p>
               </div>
             </div>
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               onClick={() => {
                 setShowMap(true);
                 setIsTracking(true);
@@ -232,17 +363,16 @@ const Capture = () => {
         </div>
       </div>
 
-      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 lg:ml-64">
         <div className="space-y-6">
           {/* Progress Steps */}
-          <Card className="bg-white shadow-lg">
-            <CardContent className="p-8">
-              <div className="flex items-center justify-between">
-                <div className={`flex items-center gap-3 transition-all ${step === 'pickup' ? 'scale-110' : ''}`}>
-                  <div className={`w-12 h-12 rounded-full flex items-center justify-center border-2 transition-all ${
-                    step === 'pickup' ? 'border-green-600 bg-green-50 shadow-lg' : 
+          <Card className="bg-card border border-border shadow-lg">
+            <CardContent className="p-4 sm:p-6 md:p-8">
+              <div className="flex flex-wrap md:flex-nowrap items-center justify-between gap-4">
+                <div className={`flex items-center gap-3 transition-all ${step === 'pickup' ? 'md:scale-110' : ''}`}>
+                  <div className={`w-10 h-10 md:w-12 md:h-12 rounded-full flex items-center justify-center border-2 transition-all ${step === 'pickup' ? 'border-green-600 bg-green-50 shadow-lg' :
                     pickupImage ? 'border-green-600 bg-green-600 text-white' : 'border-gray-300'
-                  }`}>
+                    }`}>
                     {pickupImage ? <CheckCircle className="h-6 w-6" /> : <Trash2 className="h-6 w-6" />}
                   </div>
                   <div>
@@ -250,14 +380,13 @@ const Capture = () => {
                     <span className="text-xs text-gray-500">Capture waste</span>
                   </div>
                 </div>
-                
-                <div className={`h-1 flex-1 mx-6 rounded-full transition-all ${pickupImage ? 'bg-green-600' : 'bg-gray-200'}`} />
-                
-                <div className={`flex items-center gap-3 transition-all ${step === 'disposal' ? 'scale-110' : ''}`}>
-                  <div className={`w-12 h-12 rounded-full flex items-center justify-center border-2 transition-all ${
-                    step === 'disposal' ? 'border-blue-600 bg-blue-50 shadow-lg' : 
+
+                <div className={`hidden md:block h-1 flex-1 mx-4 rounded-full transition-all ${pickupImage ? 'bg-green-600' : 'bg-gray-200'}`} />
+
+                <div className={`flex items-center gap-3 w-full md:w-auto transition-all ${step === 'disposal' ? 'scale-110' : ''}`}>
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center border-2 transition-all ${step === 'disposal' ? 'border-blue-600 bg-blue-50 shadow-lg' :
                     step === 'verify' ? 'border-blue-600 bg-blue-600 text-white' : 'border-gray-300'
-                  }`}>
+                    }`}>
                     {disposalImage ? <CheckCircle className="h-6 w-6" /> : <Recycle className="h-6 w-6" />}
                   </div>
                   <div>
@@ -265,17 +394,16 @@ const Capture = () => {
                     <span className="text-xs text-gray-500">At dustbin</span>
                   </div>
                 </div>
-                
-                <div className={`h-1 flex-1 mx-6 rounded-full transition-all ${disposalImage ? 'bg-blue-600' : 'bg-gray-200'}`} />
-                
-                <div className={`flex items-center gap-3 transition-all ${step === 'verify' ? 'scale-110' : ''}`}>
-                  <div className={`w-12 h-12 rounded-full flex items-center justify-center border-2 transition-all ${
-                    step === 'verify' ? 'border-purple-600 bg-purple-50 shadow-lg' : 'border-gray-300'
-                  }`}>
+
+                <div className={`hidden md:block h-1 flex-1 mx-4 rounded-full transition-all ${disposalImage ? 'bg-blue-600' : 'bg-gray-200'}`} />
+
+                <div className={`flex items-center gap-3 w-full md:w-auto transition-all ${step === 'verify' ? 'scale-110' : ''}`}>
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center border-2 transition-all ${step === 'verify' ? 'border-purple-600 bg-purple-50 shadow-lg' : 'border-gray-300'
+                    }`}>
                     <Upload className="h-6 w-6" />
                   </div>
-                  <div>
-                    <span className="font-semibold block">Verify</span>
+                  <div className="min-w-0">
+                    <span className="font-semibold block text-sm md:text-base"></span>
                     <span className="text-xs text-gray-500">Submit report</span>
                   </div>
                 </div>
@@ -286,9 +414,9 @@ const Capture = () => {
           {/* Pickup Step */}
           {step === 'pickup' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 animate-fade-in">
-              <Card className="bg-gradient-to-br from-green-50 to-emerald-50 border-green-200 shadow-xl">
+              <Card className="bg-card border border-border shadow-xl">
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-green-700">
+                  <CardTitle className="flex items-center gap-2 text-foreground">
                     <Trash2 className="h-6 w-6" />
                     Capture Waste Pickup
                   </CardTitle>
@@ -307,7 +435,7 @@ const Capture = () => {
                       ) : (
                         <Button
                           onClick={() => startCamera('pickup')}
-                          className="w-full h-64 bg-gradient-to-br from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 shadow-xl"
+                          className="w-full h-64 bg-gradient-to-br from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 shadow-xl text-white"
                           size="lg"
                         >
                           <div className="text-center">
@@ -329,15 +457,15 @@ const Capture = () => {
                         <canvas ref={canvasRef} style={{ display: 'none' }} />
                       </div>
                       <div className="flex gap-2">
-                        <Button 
-                          onClick={() => capturePhoto('pickup')} 
+                        <Button
+                          onClick={() => capturePhoto('pickup')}
                           className="flex-1 bg-green-600 hover:bg-green-700 h-14 text-lg"
                           size="lg"
                         >
                           <Camera className="mr-2 h-5 w-5" />
                           Capture Now
                         </Button>
-                        <Button 
+                        <Button
                           onClick={() => {
                             const stream = videoRef.current?.srcObject as MediaStream;
                             stream?.getTracks().forEach(track => track.stop());
@@ -351,7 +479,7 @@ const Capture = () => {
                       </div>
                     </div>
                   )}
-                  
+
                   <Button
                     onClick={() => getCurrentLocation('pickup')}
                     variant="outline"
@@ -365,7 +493,7 @@ const Capture = () => {
               </Card>
 
               <div className="space-y-6">
-                <Card className="shadow-lg">
+                <Card className="bg-card border border-border shadow-lg">
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <MapPin className="h-5 w-5 text-green-600" />
@@ -373,22 +501,22 @@ const Capture = () => {
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <div className="bg-gray-50 rounded-lg p-4 space-y-2">
+                    <div className="bg-muted rounded-lg p-4 space-y-2">
                       <div className="flex justify-between text-sm">
-                        <span className="font-medium">Latitude:</span>
+                        <span className="font-medium text-foreground">Latitude:</span>
                         <span className="font-mono">{pickupLocation?.lat.toFixed(6) ?? 'Not captured'}</span>
                       </div>
                       <div className="flex justify-between text-sm">
-                        <span className="font-medium">Longitude:</span>
+                        <span className="font-medium text-foreground">Longitude:</span>
                         <span className="font-mono">{pickupLocation?.lng.toFixed(6) ?? 'Not captured'}</span>
                       </div>
                     </div>
                   </CardContent>
                 </Card>
 
-                <Alert className="bg-green-50 border-green-200">
+                <Alert className="bg-muted border border-border">
                   <AlertCircle className="h-4 w-4 text-green-600" />
-                  <AlertDescription className="text-green-800">
+                  <AlertDescription className="text-foreground">
                     <strong>Pro Tips:</strong>
                     <ul className="mt-2 space-y-1 text-sm">
                       <li>✓ Ensure good lighting for clear photos</li>
@@ -448,15 +576,15 @@ const Capture = () => {
                         <canvas ref={canvasRef} style={{ display: 'none' }} />
                       </div>
                       <div className="flex gap-2">
-                        <Button 
-                          onClick={() => capturePhoto('disposal')} 
+                        <Button
+                          onClick={() => capturePhoto('disposal')}
                           className="flex-1 bg-blue-600 hover:bg-blue-700 h-14 text-lg"
                           size="lg"
                         >
                           <Camera className="mr-2 h-5 w-5" />
                           Capture Now
                         </Button>
-                        <Button 
+                        <Button
                           onClick={() => {
                             const stream = videoRef.current?.srcObject as MediaStream;
                             stream?.getTracks().forEach(track => track.stop());
@@ -470,7 +598,7 @@ const Capture = () => {
                       </div>
                     </div>
                   )}
-                  
+
                   <Button
                     onClick={() => getCurrentLocation('disposal')}
                     variant="outline"
@@ -485,7 +613,7 @@ const Capture = () => {
 
               <div className="space-y-6">
                 {pickupImage && (
-                  <Card className="shadow-lg">
+                  <Card className="bg-card border border-border shadow-lg">
                     <CardHeader>
                       <CardTitle className="text-sm flex items-center gap-2">
                         <CheckCircle className="h-4 w-4 text-green-600" />
@@ -503,23 +631,49 @@ const Capture = () => {
                   </Card>
                 )}
 
-                <Card className="shadow-lg">
+                <Card className="bg-card border border-border shadow-lg">
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <MapPin className="h-5 w-5 text-blue-600" />
-                      Location Verification
+                      Dustbin & Location
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
+                    <div className="p-4 rounded-lg bg-muted border border-border">
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <p className="text-xs text-muted-foreground">Selected dustbin</p>
+                          <p className="font-semibold text-sm">
+                            {selectedDustbin ? selectedDustbin.name : 'No dustbin selected'}
+                          </p>
+                          {selectedDustbin && (
+                            <p className="text-xs text-muted-foreground mt-1">
+                              {selectedDustbin.sector || 'Sector not set'} • {selectedDustbin.type || 'Mixed'}
+                            </p>
+                          )}
+                        </div>
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => {
+                            setShowMap(true);
+                            setIsTracking(true);
+                          }}
+                        >
+                          Choose Dustbin
+                        </Button>
+                      </div>
+                    </div>
+
                     {nearestDustbin && (
-                      <div className={`p-4 rounded-lg ${nearestDustbin.distance < 50 ? 'bg-green-50 border border-green-200' : 'bg-yellow-50 border border-yellow-200'}`}>
+                      <div className={`p-4 rounded-lg ${nearestDustbin.distance < 50 ? 'bg-green-50 border border-green-200' : 'bg-muted border border-border'}`}>
                         <div className="flex items-center justify-between mb-2">
-                          <span className="font-semibold">{nearestDustbin.bin.name}</span>
+                          <span className="font-semibold">Nearest bin: {nearestDustbin.bin.name}</span>
                           <Badge variant={nearestDustbin.distance < 50 ? 'default' : 'secondary'}>
                             {nearestDustbin.distance.toFixed(0)}m away
                           </Badge>
                         </div>
-                        <p className="text-sm text-gray-600">Type: {nearestDustbin.bin.type}</p>
+                        <p className="text-sm text-muted-foreground">Type: {nearestDustbin.bin.type}</p>
                       </div>
                     )}
                   </CardContent>
@@ -531,11 +685,11 @@ const Capture = () => {
           {/* Verify Step */}
           {step === 'verify' && (
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 animate-fade-in">
-              <Card className="lg:col-span-2 shadow-xl">
+              <Card className="lg:col-span-2 bg-card border border-border shadow-xl">
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2 text-purple-700">
+                  <CardTitle className="flex items-center gap-2 text-foreground">
                     <CheckCircle className="h-6 w-6" />
-                    Review & Submitp
+                    Review & Submit
                   </CardTitle>
                   <CardDescription>Verify all captured information before submission</CardDescription>
                 </CardHeader>
@@ -550,7 +704,7 @@ const Capture = () => {
                             <ZoomIn className="h-12 w-12 text-white" />
                           </div>
                         </div>
-                        <div className="mt-2 text-xs bg-gray-50 p-2 rounded">
+                        <div className="mt-2 text-xs bg-muted p-2 rounded">
                           <p>Lat: {pickupLocation?.lat?.toFixed(6)}</p>
                           <p>Lng: {pickupLocation?.lng?.toFixed(6)}</p>
                         </div>
@@ -565,7 +719,7 @@ const Capture = () => {
                             <ZoomIn className="h-12 w-12 text-white" />
                           </div>
                         </div>
-                        <div className="mt-2 text-xs bg-gray-50 p-2 rounded">
+                        <div className="mt-2 text-xs bg-muted p-2 rounded">
                           <p>Lat: {disposalLocation?.lat?.toFixed(6)}</p>
                           <p>Lng: {disposalLocation?.lng?.toFixed(6)}</p>
                         </div>
@@ -575,32 +729,38 @@ const Capture = () => {
                 </CardContent>
               </Card>
 
-              <div className="space-y-6">
-                <Card className="bg-gradient-to-br from-purple-50 to-pink-50 shadow-xl">
+              <div className="space-y-4">
+                <Card className="bg-card border border-border shadow-md">
                   <CardHeader>
-                    <CardTitle className="text-sm">🤖 AI Analysis</CardTitle>
+                    <CardTitle className="text-sm">Waste Details</CardTitle>
+                    <CardDescription className="text-xs">
+                      Optional description of each waste type and how much (e.g. counts, bags, or weight).
+                    </CardDescription>
                   </CardHeader>
-                  <CardContent className="space-y-3">
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm">Waste Type:</span>
-                      <Badge className="bg-purple-600">Mixed Plastic</Badge>
+                  <CardContent className="space-y-3 text-xs">
+                    <div className="space-y-1">
+                      <p>Waste types</p>
+                      <textarea
+                        className="w-full border rounded px-2 py-1 text-xs min-h-[60px]"
+                        placeholder="e.g. Plastic bottles, paper cups, food scraps"
+                        value={materialType}
+                        onChange={(e) => setMaterialType(e.target.value)}
+                      />
                     </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm">Weight:</span>
-                      <Badge variant="secondary">8.5 kg</Badge>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm">Quality:</span>
-                      <Badge className="bg-green-600">Excellent ✓</Badge>
-                    </div>
-                    <div className="flex justify-between items-center">
-                      <span className="text-sm font-bold">Points:</span>
-                      <Badge className="bg-yellow-500 text-lg">+42 pts 🏆</Badge>
+                    <div className="space-y-1">
+                      <p>Quantities (any format)</p>
+                      <input
+                        type="text"
+                        className="w-full border rounded px-2 py-1 text-xs"
+                        placeholder="e.g. 3 bottles, 2 bags, ~0.5 kg"
+                        value={wasteQuantityDescription}
+                        onChange={(e) => setWasteQuantityDescription(e.target.value)}
+                      />
                     </div>
                   </CardContent>
                 </Card>
 
-                <Button 
+                <Button
                   onClick={submitReport}
                   className="w-full h-16 text-lg bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 shadow-xl"
                   size="lg"
@@ -611,14 +771,152 @@ const Capture = () => {
               </div>
             </div>
           )}
+
+          {/* TESTING ONLY: Manual input section (not for production) */}
+          <Card className="mt-8 border-dashed border-amber-400 bg-amber-50/50">
+            <CardHeader>
+              <CardTitle className="text-sm flex items-center gap-2 text-amber-700">
+                <AlertCircle className="h-4 w-4" />
+                Testing Only – Manual Input (Not for Production)
+              </CardTitle>
+              <CardDescription className="text-xs">
+                Use this section only for local testing. It lets you upload images and type coordinates manually while keeping the main capture flow unchanged.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4 text-xs">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-3">
+                  <p className="font-semibold text-xs">Pickup (Manual)</p>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) { setManualPickupImage(null); return; }
+                      const reader = new FileReader();
+                      reader.onloadend = () => setManualPickupImage(reader.result as string);
+                      reader.readAsDataURL(file);
+                    }}
+                    className="block w-full text-xs"
+                  />
+                  {manualPickupImage && (
+                    <img src={manualPickupImage} alt="Manual pickup" className="w-full h-24 object-cover rounded border" />
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <p className="mb-1">Lat</p>
+                      <input
+                        type="number"
+                        step="any"
+                        value={manualPickupLat}
+                        onChange={(e) => setManualPickupLat(e.target.value)}
+                        className="w-full border rounded px-2 py-1 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <p className="mb-1">Lng</p>
+                      <input
+                        type="number"
+                        step="any"
+                        value={manualPickupLng}
+                        onChange={(e) => setManualPickupLng(e.target.value)}
+                        className="w-full border rounded px-2 py-1 text-xs"
+                      />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <p className="font-semibold text-xs">Disposal (Manual)</p>
+                  <input
+                    type="file"
+                    accept="image/*"
+                    onChange={(e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) { setManualDisposalImage(null); return; }
+                      const reader = new FileReader();
+                      reader.onloadend = () => setManualDisposalImage(reader.result as string);
+                      reader.readAsDataURL(file);
+                    }}
+                    className="block w-full text-xs"
+                  />
+                  {manualDisposalImage && (
+                    <img src={manualDisposalImage} alt="Manual disposal" className="w-full h-24 object-cover rounded border" />
+                  )}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <p className="mb-1">Lat</p>
+                      <input
+                        type="number"
+                        step="any"
+                        value={manualDisposalLat}
+                        onChange={(e) => setManualDisposalLat(e.target.value)}
+                        className="w-full border rounded px-2 py-1 text-xs"
+                      />
+                    </div>
+                    <div>
+                      <p className="mb-1">Lng</p>
+                      <input
+                        type="number"
+                        step="any"
+                        value={manualDisposalLng}
+                        onChange={(e) => setManualDisposalLng(e.target.value)}
+                        className="w-full border rounded px-2 py-1 text-xs"
+                      />
+                    </div>
+                  </div>
+                  <div className="space-y-1 mt-2">
+                    <p>Waste details (type and quantity)</p>
+                    <textarea
+                      className="w-full border rounded px-2 py-1 text-xs min-h-[50px]"
+                      placeholder="e.g. 3 plastic bottles, 1 glass jar, some paper scraps"
+                      value={manualMaterialType}
+                      onChange={(e) => setManualMaterialType(e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-2 mt-2">
+                <div className="flex-1 flex flex-col md:flex-row md:items-center md:gap-2 text-[11px] text-muted-foreground">
+                  <span>
+                    Selected dustbin (optional link):{' '}
+                    <span className="font-medium">{selectedDustbin ? selectedDustbin.name : 'None – report will not be linked to a dustbin'}</span>
+                  </span>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    className="mt-1 md:mt-0 text-xs"
+                    onClick={() => {
+                      setShowMap(true);
+                      setIsTracking(true);
+                    }}
+                  >
+                    Choose Dustbin
+                  </Button>
+                </div>
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  className="text-xs"
+                  onClick={submitManualTestReport}
+                  disabled={manualSubmitting}
+                >
+                  {manualSubmitting ? 'Submitting test report…' : 'Submit Test Report (Manual)'}
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       </main>
 
       {/* Interactive Map Modal */}
       {showMap && (
         <div className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4">
-          <Card className="w-full max-w-6xl h-[80vh] flex flex-col">
-            <CardHeader className="flex-row items-center justify-between border-b">
+          <Card className="w-full max-w-6xl h-[80vh] flex flex-col bg-card border border-border">
+            <CardHeader className="flex-row items-center justify-between border-b gap-2">
               <div>
                 <CardTitle className="flex items-center gap-2">
                   <MapIcon className="h-5 w-5 text-blue-600" />
@@ -626,222 +924,44 @@ const Capture = () => {
                 </CardTitle>
                 <CardDescription>Real-time locations of waste collection points</CardDescription>
               </div>
-              <Button 
-                variant="ghost" 
-                size="sm"
-                onClick={() => {
-                  setShowMap(false);
-                  setIsTracking(false);
-                }}
-              >
-                <X className="h-5 w-5" />
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs"
+                  onClick={locateUserOnMap}
+                >
+                  Locate Me
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => {
+                    setShowMap(false);
+                    setIsTracking(false);
+                  }}
+                >
+                  <X className="h-5 w-5" />
+                </Button>
+              </div>
             </CardHeader>
             <CardContent className="flex-1 p-0 relative overflow-hidden">
-              {/* Simple Map Visualization */}
-              <div className="w-full h-full bg-gradient-to-br from-green-100 via-blue-100 to-cyan-100 relative">
-                {/* Map Grid */}
-                <div className="absolute inset-0" style={{
-                  backgroundImage: 'linear-gradient(rgba(0,0,0,.05) 1px, transparent 1px), linear-gradient(90deg, rgba(0,0,0,.05) 1px, transparent 1px)',
-                  backgroundSize: '50px 50px'
-                }} />
-                
-                {/* Legend */}
-                <div className="absolute top-4 left-4 bg-white rounded-lg shadow-lg p-4 z-10 space-y-2">
-                  <h3 className="font-semibold text-sm mb-2">Map Legend</h3>
-                  <div className="flex items-center gap-2 text-xs">
-                    <div className="w-4 h-4 bg-blue-600 rounded-full animate-pulse" />
-                    <span>Your Location</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-xs">
-                    <div className="w-4 h-4 bg-green-600 rounded" />
-                    <span>Dustbins</span>
-                  </div>
-                  <div className="flex items-center gap-2 text-xs">
-                    <div className="w-4 h-4 bg-yellow-500 rounded" />
-                    <span>Selected</span>
-                  </div>
-                </div>
-
-                {/* Stats Panel */}
-                <div className="absolute top-4 right-4 bg-white rounded-lg shadow-lg p-4 z-10 space-y-2 min-w-48">
-                  <h3 className="font-semibold text-sm mb-2">Statistics</h3>
-                  <div className="text-xs space-y-1">
-                    <div className="flex justify-between">
-                      <span>Total Bins:</span>
-                      <span className="font-bold">{DUSTBINS.length}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Active:</span>
-                      <span className="font-bold text-green-600">{DUSTBINS.length}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Tracking:</span>
-                      <span className={`font-bold ${isTracking ? 'text-blue-600' : 'text-gray-400'}`}>
-                        {isTracking ? 'ON' : 'OFF'}
-                      </span>
+              <div className="w-full h-full">
+                {loadingBins ? (
+                  <div className="w-full h-full flex items-center justify-center text-sm text-muted-foreground">Loading map…</div>
+                ) : activeDustbins.length === 0 ? (
+                  <div className="w-full h-full flex items-center justify-center text-sm text-muted-foreground">No dustbins available. Employees can add dustbins from the dashboard.</div>
+                ) : (
+                  <div className="w-full h-full">
+                    <div className="w-full h-full min-h-[320px]">
+                      <DustbinMap
+                        userLocation={userLocation}
+                        dustbins={activeDustbins}
+                        onSelect={(bin) => setSelectedDustbin(bin)}
+                      />
                     </div>
                   </div>
-                </div>
-
-                {/* Map Content */}
-                <div className="absolute inset-0 flex items-center justify-center p-20">
-                  <div className="relative w-full h-full">
-                    {/* Dustbin Markers */}
-                    {DUSTBINS.map((bin, idx) => {
-                      const isSelected = selectedDustbin?.id === bin.id;
-                      const xPos = 15 + (idx % 2) * 35 + (idx * 10);
-                      const yPos = 20 + Math.floor(idx / 2) * 40;
-                      
-                      return (
-                        <div
-                          key={bin.id}
-                          className={`absolute transform -translate-x-1/2 -translate-y-1/2 cursor-pointer transition-all hover:scale-125 ${
-                            isSelected ? 'z-20 scale-125' : 'z-10'
-                          }`}
-                          style={{ left: `${xPos}%`, top: `${yPos}%` }}
-                          onClick={() => setSelectedDustbin(isSelected ? null : bin)}
-                        >
-                          {/* Marker */}
-                          <div className={`relative ${isSelected ? 'animate-bounce' : ''}`}>
-                            <div className={`w-12 h-12 rounded-lg shadow-xl flex items-center justify-center ${
-                              isSelected ? 'bg-yellow-500' : 'bg-green-600'
-                            } text-white font-bold`}>
-                              <Trash2 className="h-6 w-6" />
-                            </div>
-                            
-                            {/* Pulse Effect */}
-                            <div className={`absolute inset-0 rounded-lg ${
-                              isSelected ? 'bg-yellow-500' : 'bg-green-600'
-                            } animate-ping opacity-20`} />
-                          </div>
-                          
-                          {/* Info Card */}
-                          {isSelected && (
-                            <div className="absolute top-14 left-1/2 transform -translate-x-1/2 bg-white rounded-lg shadow-2xl p-4 w-64 animate-fade-in">
-                              <div className="flex items-start justify-between mb-2">
-                                <div>
-                                  <h4 className="font-bold text-sm">{bin.name}</h4>
-                                  <p className="text-xs text-gray-500">ID: {bin.id}</p>
-                                </div>
-                                <Badge className="bg-green-600">{bin.type}</Badge>
-                              </div>
-                              <div className="space-y-2 text-xs">
-                                <div className="flex justify-between">
-                                  <span className="text-gray-600">Latitude:</span>
-                                  <span className="font-mono">{bin.lat.toFixed(4)}°</span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span className="text-gray-600">Longitude:</span>
-                                  <span className="font-mono">{bin.lng.toFixed(4)}°</span>
-                                </div>
-                                {userLocation && (
-                                  <div className="flex justify-between pt-2 border-t">
-                                    <span className="text-gray-600">Distance:</span>
-                                    <span className="font-bold text-blue-600">
-                                      {getDistanceFromLatLonInMeters(
-                                        userLocation.lat,
-                                        userLocation.lng,
-                                        bin.lat,
-                                        bin.lng
-                                      ).toFixed(0)}m
-                                    </span>
-                                  </div>
-                                )}
-                              </div>
-                              <Button 
-                                size="sm" 
-                                className="w-full mt-3 bg-blue-600 hover:bg-blue-700"
-                                onClick={() => {
-                                  alert(`Navigating to ${bin.name}...`);
-                                }}
-                              >
-                                <NavIcon className="mr-2 h-3 w-3" />
-                                Navigate Here
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-
-                    {/* User Location Marker */}
-                    {userLocation && (
-                      <div
-                        className="absolute transform -translate-x-1/2 -translate-y-1/2 z-30"
-                        style={{ left: '50%', top: '50%' }}
-                      >
-                        <div className="relative">
-                          {/* Outer pulse ring */}
-                          <div className="absolute inset-0 w-16 h-16 bg-blue-400 rounded-full animate-ping opacity-30" />
-                          
-                          {/* Middle ring */}
-                          <div className="absolute inset-2 w-12 h-12 bg-blue-500 rounded-full animate-pulse opacity-50" />
-                          
-                          {/* Core marker */}
-                          <div className="relative w-16 h-16 bg-blue-600 rounded-full shadow-2xl flex items-center justify-center border-4 border-white">
-                            <div className="w-3 h-3 bg-white rounded-full animate-pulse" />
-                          </div>
-                        </div>
-                        
-                        {/* User label */}
-                        <div className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 bg-blue-600 text-white px-3 py-1 rounded-full text-xs font-bold whitespace-nowrap shadow-lg">
-                          You Are Here
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Connection Lines (if disposal location is set) */}
-                    {disposalLocation && nearestDustbin && (
-                      <svg className="absolute inset-0 w-full h-full pointer-events-none" style={{ zIndex: 5 }}>
-                        <line
-                          x1="50%"
-                          y1="50%"
-                          x2={`${15 + (DUSTBINS.findIndex(b => b.id === nearestDustbin.bin.id) % 2) * 35 + (DUSTBINS.findIndex(b => b.id === nearestDustbin.bin.id) * 10)}%`}
-                          y2={`${20 + Math.floor(DUSTBINS.findIndex(b => b.id === nearestDustbin.bin.id) / 2) * 40}%`}
-                          stroke={nearestDustbin.distance < 50 ? "#22c55e" : "#eab308"}
-                          strokeWidth="3"
-                          strokeDasharray="10,5"
-                          className="animate-pulse"
-                        />
-                      </svg>
-                    )}
-                  </div>
-                </div>
-
-                {/* Bottom Control Panel */}
-                <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-white rounded-lg shadow-xl p-4 z-10 flex gap-4">
-                  <Button
-                    variant={isTracking ? "default" : "outline"}
-                    size="sm"
-                    onClick={() => {
-                      setIsTracking(!isTracking);
-                      if (!isTracking) {
-                        getCurrentLocation(step === 'pickup' ? 'pickup' : 'disposal');
-                      }
-                    }}
-                    className={isTracking ? "bg-blue-600" : ""}
-                  >
-                    <NavIcon className={`mr-2 h-4 w-4 ${isTracking ? 'animate-spin' : ''}`} />
-                    {isTracking ? 'Tracking...' : 'Start Tracking'}
-                  </Button>
-                  
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      setSelectedDustbin(null);
-                      setUserLocation(null);
-                    }}
-                  >
-                    Reset View
-                  </Button>
-
-                  <Badge variant="secondary" className="flex items-center gap-2">
-                    <div className="w-2 h-2 bg-green-600 rounded-full animate-pulse" />
-                    Live Map
-                  </Badge>
-                </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -850,7 +970,7 @@ const Capture = () => {
 
       {/* Image Viewer Modal */}
       {expandedImage && (
-        <div 
+        <div
           className="fixed inset-0 bg-black/90 z-50 flex items-center justify-center p-4"
           onClick={() => setExpandedImage(null)}
         >
@@ -863,9 +983,9 @@ const Capture = () => {
             >
               <X className="h-6 w-6" />
             </Button>
-            <img 
-              src={expandedImage} 
-              alt="Expanded view" 
+            <img
+              src={expandedImage}
+              alt="Expanded view"
               className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl"
               onClick={(e) => e.stopPropagation()}
             />

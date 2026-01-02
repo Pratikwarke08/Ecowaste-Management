@@ -6,6 +6,8 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Shield, Users, Recycle, Mail, Lock, User, Eye, EyeOff } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
+import { API_BASE } from '@/lib/api';
+import { applyTheme } from '@/lib/theme';
 
 interface LoginFormProps {
   onLogin: (userType: 'collector' | 'employee', userData: { name?: string; email: string }) => void;
@@ -29,7 +31,9 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
     return password.length >= 6;
   };
 
-  const handleSignIn = (e: React.FormEvent) => {
+  // API base is centralized in lib/api
+
+  const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!validateEmail(email)) {
@@ -51,18 +55,42 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
     }
 
     setIsLoading(true);
-    
-    setTimeout(() => {
-      setIsLoading(false);
-      onLogin(userType, { email });
+    try {
+      const res = await fetch(`${API_BASE}/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password, role: userType })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || 'Login failed');
+      }
+      if (data?.user?.role && data.user.role !== userType) {
+        throw new Error(`This account is registered as '${data.user.role}'. Switch account type.`);
+      }
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('user', JSON.stringify(data.user));
+      localStorage.setItem('userType', data.user.role);
+      // Apply saved theme from server immediately after login
+      applyTheme(data?.user?.settings?.preferences?.theme);
+      onLogin(data.user.role, { email: data.user.email, name: data.user.name });
       toast({
         title: "Login Successful",
         description: `Welcome back to EcoWaste Management System!`,
       });
-    }, 1500);
+    } catch (err) {
+      const error = err as Error & { message?: string };
+      toast({
+        title: "Login Failed",
+        description: error.message || "Please check your credentials",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
-  const handleSignUp = (e: React.FormEvent) => {
+  const handleSignUp = async (e: React.FormEvent) => {
     e.preventDefault();
     
     if (!name.trim()) {
@@ -93,17 +121,34 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
     }
 
     setIsLoading(true);
-    
-    setTimeout(() => {
-      setIsLoading(false);
+    try {
+      const res = await fetch(`${API_BASE}/auth/signup`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, email, password, role: userType })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data?.error || 'Signup failed');
+      }
+      localStorage.setItem('token', data.token);
+      localStorage.setItem('user', JSON.stringify(data.user));
+      localStorage.setItem('userType', data.user.role || userType);
       toast({
         title: "Account Created Successfully",
         description: "Welcome to EcoWaste Management System!",
       });
-      setTimeout(() => {
-        onLogin(userType, { name, email });
-      }, 500);
-    }, 1500);
+      onLogin(data.user.role || userType, { name: data.user.name, email: data.user.email });
+    } catch (err) {
+      const error = err as Error & { message?: string };
+      toast({
+        title: "Signup Failed",
+        description: error.message || "Please try again",
+        variant: "destructive",
+      });
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const resetForm = () => {

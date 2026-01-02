@@ -18,20 +18,46 @@ export default defineConfig(({ mode }) => ({
   ].filter(Boolean),
 
   build: {
-    chunkSizeWarningLimit: 1000, // increases warning limit
+    chunkSizeWarningLimit: 1000,
+    rollupOptions: {
+      output: {
+        manualChunks: {
+          'react-vendor': ['react', 'react-dom', 'react-router-dom'],
+          'ui-vendor': ['@radix-ui/react-slot', '@radix-ui/react-tooltip'],
+          'query-vendor': ['@tanstack/react-query'],
+        },
+      },
+    },
+    minify: 'esbuild', // Faster than terser
+    // Console logs will be removed in production via esbuild
   },
 
   server: {
-    https: {
-      key: fs.existsSync("localhost-key.pem") 
-        ? fs.readFileSync("localhost-key.pem") 
-        : undefined,
-      cert: fs.existsSync("localhost-cert.pem") 
-        ? fs.readFileSync("localhost-cert.pem") 
-        : undefined,
-    },
+    // Disable HTTPS in development to avoid macOS AirPlay conflicts
+    // Use HTTP only - the proxy will handle backend communication
     host: "0.0.0.0", // allows access from LAN/mobile
     port: 5173,
+    allowedHosts: true,
+
+
+    proxy: {
+      "/api": {
+        target: process.env.VITE_DEV_API_TARGET || "http://localhost:3000",
+
+        changeOrigin: true,
+        secure: false,
+        configure: (proxy, _options) => {
+          if (mode === 'development') {
+            proxy.on('error', (err, _req, res) => {
+              console.log('proxy error', err);
+            });
+            proxy.on('proxyReq', (proxyReq, req, _res) => {
+              console.log('Proxying request:', req.method, req.url);
+            });
+          }
+        },
+      },
+    },
   },
 
   resolve: {

@@ -1,58 +1,186 @@
+import { useEffect, useMemo, useState } from 'react';
+import { useNavigate } from "react-router-dom";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { 
-  MapPin, 
-  Shield, 
-  Users, 
-  AlertCircle, 
+import {
+  MapPin,
+  Shield,
+  Users,
+  AlertCircle,
   CheckCircle,
   TrendingUp,
   Activity,
   Clock
 } from 'lucide-react';
-import { useNavigate } from "react-router-dom";
+import { apiFetch } from '@/lib/api';
+
+interface DashboardReportItem {
+  id: string;
+  status: 'pending' | 'approved' | 'rejected';
+  collectorEmail?: string;
+  points: number;
+  submittedAt: string;
+  verificationComment?: string;
+  nearestDustbinName?: string | null;
+  disposalDistance?: number | null;
+}
+
+interface CollectorStat {
+  _id: string;
+  totalReports: number;
+  totalPoints: number;
+  totalWeight: number;
+  lastActive: string;
+  avgLat?: number;
+  avgLng?: number;
+  minLat?: number;
+  maxLat?: number;
+  minLng?: number;
+  maxLng?: number;
+}
+
+interface EmployeeDashboardResponse {
+  reports: {
+    pendingCount: number;
+    approvedToday: number;
+    totalReports: number;
+    recentReports: DashboardReportItem[];
+  };
+  collectors: {
+    activeCollectors: number;
+    stats: CollectorStat[];
+  };
+  dustbins: {
+    total: number;
+    active: number;
+    full: number;
+    maintenance: number;
+    urgent: number;
+    averageFill: number;
+  };
+  complaints?: {
+    pending: number;
+    urgent: number;
+  };
+}
 
 const EmployeeDashboard = () => {
   const navigate = useNavigate();
+  const [data, setData] = useState<EmployeeDashboardResponse | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  const stats = {
-    totalDustbins: 45,
-    pendingVerifications: 12,
-    approvedToday: 8,
-    activeCollectors: 127,
-    weeklyTarget: 50,
+  useEffect(() => {
+    let isMounted = true;
+    const loadDashboard = async () => {
+      try {
+        const res = await apiFetch('/dashboard/employee');
+        const json = await res.json();
+        if (!isMounted) return;
+        setData(json);
+      } catch (err) {
+        if (!isMounted) return;
+        const error = err as Error & { status?: number; message?: string };
+        console.error(error);
+        setError(error.message || 'Failed to load dashboard');
+        if (error.status === 401) {
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          localStorage.removeItem('userType');
+          navigate('/');
+        }
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    };
+    loadDashboard();
+    return () => {
+      isMounted = false;
+    };
+  }, [navigate]);
+
+  const pendingReports = useMemo(
+    () => (data?.reports.recentReports || []).filter(r => r.status === 'pending'),
+    [data]
+  );
+
+  const approvedReports = useMemo(
+    () => (data?.reports.recentReports || []).filter(r => r.status === 'approved'),
+    [data]
+  );
+
+  const recentActivity = useMemo(
+    () => data?.reports.recentReports || [],
+    [data]
+  );
+
+  const downloadReport = (stat: CollectorStat) => {
+    const reportData = [
+      ['Collector Performance Report', ''],
+      ['Collector ID', stat._id],
+      ['Date Generated', new Date().toLocaleString()],
+      ['', ''],
+      ['Performance Metrics', ''],
+      ['Total Reports', stat.totalReports],
+      ['Total Points', stat.totalPoints],
+      ['Total Waste Collected (kg)', stat.totalWeight.toFixed(2)],
+      ['Last Active', new Date(stat.lastActive).toLocaleString()],
+      ['', ''],
+      ['Geographic Coverage', ''],
+      ['Average Location (Lat, Lng)', `${stat.avgLat?.toFixed(6) || 'N/A'}, ${stat.avgLng?.toFixed(6) || 'N/A'}`],
+      ['Latitude Range', `${stat.minLat?.toFixed(6) || 'N/A'} to ${stat.maxLat?.toFixed(6) || 'N/A'}`],
+      ['Longitude Range', `${stat.minLng?.toFixed(6) || 'N/A'} to ${stat.maxLng?.toFixed(6) || 'N/A'}`],
+    ];
+
+    const csvContent = "data:text/csv;charset=utf-8," 
+      + reportData.map(e => e.join(",")).join("\n");
+    
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `collector_report_${stat._id}_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
   };
-
-  const pendingVerifications = [
-    { id: 1, collector: 'Tejas suryawanshi', location: 'amalner maharashtra', type: 'Plastic', amount: '12kg', time: '30 min ago', urgent: true },
-    { id: 2, collector: 'devanshu yeole', location: 'mumbai maharashtra', type: 'Paper', amount: '8kg', time: '1 hour ago', urgent: false },
-    { id: 3, collector: 'sampada surwade', location: 'jalgaon maharashta', type: 'Metal', amount: '5kg', time: '2 hours ago', urgent: false },
-  ];
-
-  const recentActivity = [
-    { id: 1, action: 'Approved waste collection', collector: 'varun patil', points: 45, time: '15 min ago' },
-    { id: 2, action: 'Added new dustbin', location: 'Temple Road', time: '1 hour ago' },
-    { id: 3, action: 'Approved waste collection', collector: 'pranav thorat', points: 30, time: '2 hours ago' },
-  ];
 
   return (
     <div className="space-y-6">
-      {/* Welcome Header */}
-      <div className="bg-gradient-ocean rounded-lg p-6 text-white animate-fade-in">
-        <h1 className="text-2xl font-bold mb-2">Government Dashboard</h1>
-        <p className="text-white/90">Monitor and manage waste collection activities</p>
+
+      {/* Header */}
+      <div className="bg-gradient-ocean rounded-lg p-4 sm:p-6 text-white animate-fade-in">
+        <h1 className="text-xl sm:text-2xl font-bold mb-2">
+          Government Dashboard
+        </h1>
+        <p className="text-white/90 text-sm sm:text-base">
+          Monitor and manage waste collection activities
+        </p>
       </div>
 
-      {/* Quick Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+      {/* Error */}
+      {error && (
+        <Card className="border-destructive">
+          <CardContent className="p-4 text-destructive flex items-center gap-3">
+            <AlertCircle className="h-5 w-5" />
+            <span>{error}</span>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Top Stats */}
+      <div className="grid grid-cols-2 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <Card className="animate-scale-in">
-          <CardContent className="p-6">
+          <CardContent className="p-4 sm:p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Total Dustbins</p>
-                <p className="text-2xl font-bold text-eco-forest-primary">{stats.totalDustbins}</p>
+                <p className="text-sm font-medium text-muted-foreground">
+                  Total Dustbins
+                </p>
+                <p className="text-2xl font-bold text-eco-forest-primary">
+                  {isLoading ? '—' : data?.dustbins.total ?? 0}
+                </p>
               </div>
               <MapPin className="h-8 w-8 text-eco-forest-primary" />
             </div>
@@ -60,11 +188,15 @@ const EmployeeDashboard = () => {
         </Card>
 
         <Card className="animate-scale-in" style={{ animationDelay: '0.1s' }}>
-          <CardContent className="p-6">
+          <CardContent className="p-4 sm:p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Pending Reviews</p>
-                <p className="text-2xl font-bold text-eco-warning">{stats.pendingVerifications}</p>
+                <p className="text-sm font-medium text-muted-foreground">
+                  Pending Reviews
+                </p>
+                <p className="text-2xl font-bold text-eco-warning">
+                  {isLoading ? '—' : data?.reports.pendingCount ?? 0}
+                </p>
               </div>
               <Clock className="h-8 w-8 text-eco-warning" />
             </div>
@@ -72,11 +204,15 @@ const EmployeeDashboard = () => {
         </Card>
 
         <Card className="animate-scale-in" style={{ animationDelay: '0.2s' }}>
-          <CardContent className="p-6">
+          <CardContent className="p-4 sm:p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Approved Today</p>
-                <p className="text-2xl font-bold text-eco-success">{stats.approvedToday}</p>
+                <p className="text-sm font-medium text-muted-foreground">
+                  Approved Today
+                </p>
+                <p className="text-2xl font-bold text-eco-success">
+                  {isLoading ? '—' : data?.reports.approvedToday ?? 0}
+                </p>
               </div>
               <CheckCircle className="h-8 w-8 text-eco-success" />
             </div>
@@ -84,71 +220,132 @@ const EmployeeDashboard = () => {
         </Card>
 
         <Card className="animate-scale-in" style={{ animationDelay: '0.3s' }}>
-          <CardContent className="p-6">
+          <CardContent className="p-4 sm:p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Active Collectors</p>
-                <p className="text-2xl font-bold text-eco-ocean">{stats.activeCollectors}</p>
+                <p className="text-sm font-medium text-muted-foreground">
+                  Active Collectors
+                </p>
+                <p className="text-2xl font-bold text-eco-ocean">
+                  {isLoading ? '—' : data?.collectors.activeCollectors ?? 0}
+                </p>
               </div>
               <Users className="h-8 w-8 text-eco-ocean" />
             </div>
           </CardContent>
         </Card>
       </div>
-
+      {/* Actions + Performance */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
         {/* Quick Actions */}
         <Card className="animate-slide-up">
           <CardHeader>
             <CardTitle>Quick Actions</CardTitle>
             <CardDescription>Manage system operations</CardDescription>
           </CardHeader>
+
           <CardContent className="space-y-4">
-            <Button className="w-full justify-start h-12" variant="ocean" onClick={() => navigate('/pending-reviews')}>
+            <Button
+              className="w-full justify-start h-12"
+              variant="ocean"
+              onClick={() => navigate('/verify')}
+            >
               <Shield className="mr-3 h-5 w-5" />
               Review Pending Verifications
-              {stats.pendingVerifications > 0 && (
+              {data?.reports.pendingCount ? (
                 <Badge variant="destructive" className="ml-auto">
-                  {stats.pendingVerifications}
+                  {data.reports.pendingCount}
                 </Badge>
-              )}
+              ) : null}
             </Button>
-            <Button className="w-full justify-start h-12" variant="eco" onClick={() => navigate('/dustbins-list')}>
+
+            <Button
+              className="w-full justify-start h-12"
+              variant="destructive"
+              onClick={() => navigate('/complaints')}
+            >
+              <AlertCircle className="mr-3 h-5 w-5" />
+              Review Complaints
+              {((data?.complaints?.pending || 0) +
+                (data?.complaints?.urgent || 0)) > 0 ? (
+                <Badge variant="destructive" className="ml-auto">
+                  {(data?.complaints?.pending || 0)}
+                  {(data?.complaints?.urgent || 0)
+                    ? ` • ${data?.complaints?.urgent} urgent`
+                    : ''}
+                </Badge>
+              ) : null}
+            </Button>
+
+            <Button
+              className="w-full justify-start h-12"
+              variant="eco"
+              onClick={() => navigate('/dustbins')}
+            >
               <MapPin className="mr-3 h-5 w-5" />
               Manage Dustbin Locations
+              {data?.dustbins.urgent ? (
+                <Badge variant="destructive" className="ml-auto">
+                  {data.dustbins.urgent} urgent
+                </Badge>
+              ) : null}
             </Button>
-            <Button className="w-full justify-start h-12" variant="earth">
+
+            <Button
+              className="w-full justify-start h-12"
+              variant="earth"
+              onClick={() => navigate('/progress')}
+            >
               <TrendingUp className="mr-3 h-5 w-5" />
               View Progress Analytics
             </Button>
           </CardContent>
         </Card>
 
-        {/* Weekly Progress */}
+        {/* Verification Performance */}
         <Card className="animate-slide-up" style={{ animationDelay: '0.1s' }}>
           <CardHeader>
-            <CardTitle>Weekly Verification Target</CardTitle>
+            <CardTitle>Verification Performance</CardTitle>
             <CardDescription>Track your verification progress</CardDescription>
           </CardHeader>
+
           <CardContent>
             <div className="space-y-4">
               <div className="flex justify-between text-sm">
-                <span>Verifications Completed</span>
-                <span>{stats.approvedToday * 7} / {stats.weeklyTarget}</span>
+                <span>Verifications Completed Today</span>
+                <span>{data?.reports.approvedToday ?? 0}</span>
               </div>
-              <Progress 
-                value={((stats.approvedToday * 7) / stats.weeklyTarget) * 100} 
+
+              <div className="flex justify-between text-sm">
+                <span>Total Reports</span>
+                <span>{data?.reports.totalReports ?? 0}</span>
+              </div>
+
+              <Progress
+                value={
+                  data && data.reports.totalReports
+                    ? Math.min(
+                      (data.reports.approvedToday /
+                        Math.max(data.reports.totalReports, 1)) *
+                      100,
+                      100
+                    )
+                    : 0
+                }
                 className="h-2"
               />
+
               <p className="text-sm text-muted-foreground">
-                {Math.round(((stats.approvedToday * 7) / stats.weeklyTarget) * 100)}% of weekly target completed
+                Aim to clear pending reports to keep the queue healthy.
               </p>
             </div>
           </CardContent>
         </Card>
       </div>
-
+      {/* Pending + Approved */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+
         {/* Pending Verifications */}
         <Card className="animate-slide-up" style={{ animationDelay: '0.2s' }}>
           <CardHeader>
@@ -156,67 +353,219 @@ const EmployeeDashboard = () => {
               <AlertCircle className="h-5 w-5 text-eco-warning" />
               Pending Verifications
             </CardTitle>
-            <CardDescription>Reports awaiting your review</CardDescription>
+            <CardDescription>
+              Reports awaiting your review
+            </CardDescription>
           </CardHeader>
+
           <CardContent>
             <div className="space-y-4">
-              {pendingVerifications.map((item) => (
-                <div key={item.id} className="flex items-center justify-between p-3 rounded-lg border">
-                  <div className="flex items-center gap-3">
-                    {item.urgent ? (
-                      <AlertCircle className="h-5 w-5 text-destructive" />
-                    ) : (
-                      <Clock className="h-5 w-5 text-eco-warning" />
-                    )}
+              {pendingReports.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No pending reports right now.
+                </p>
+              ) : (
+                pendingReports.map((report) => (
+                  <div
+                    key={report.id}
+                    className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 p-3 rounded-lg border"
+                  >
                     <div>
-                      <p className="font-medium text-sm">{item.collector}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {item.type} waste • {item.location} • {item.time}
+                      <p className="font-medium text-sm">
+                        Report #{report.id.toString().slice(-6)}
                       </p>
+                      <p className="text-xs text-muted-foreground">
+                        {report.collectorEmail || 'Collector'} •{' '}
+                        {new Date(report.submittedAt).toLocaleString()}
+                      </p>
+
+                      {(report.nearestDustbinName ||
+                        report.disposalDistance !== null) && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {report.nearestDustbinName
+                              ? `Nearest bin: ${report.nearestDustbinName}`
+                              : 'Nearest bin: —'}
+                            {typeof report.disposalDistance === 'number'
+                              ? ` • Distance: ${report.disposalDistance} m`
+                              : ''}
+                          </p>
+                        )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary">Awaiting review</Badge>
+                      <Badge variant="default">
+                        +{report.points || 0} pts
+                      </Badge>
                     </div>
                   </div>
-                  <div className="text-right">
-                    <Badge variant={item.urgent ? 'destructive' : 'secondary'}>
-                      {item.amount}
-                    </Badge>
-                  </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </CardContent>
         </Card>
 
-        {/* Recent Activity */}
+        {/* Approved Reports */}
         <Card className="animate-slide-up" style={{ animationDelay: '0.3s' }}>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
-              <Activity className="h-5 w-5 text-eco-forest-primary" />
-              Recent Activity
+              <CheckCircle className="h-5 w-5 text-eco-success" />
+              Approved Waste Collection Reports
             </CardTitle>
-            <CardDescription>Your recent actions and system updates</CardDescription>
+            <CardDescription>
+              Latest approved reports with awarded points
+            </CardDescription>
           </CardHeader>
+
           <CardContent>
-            <div className="space-y-4">
-              {recentActivity.map((activity) => (
-                <div key={activity.id} className="flex items-center gap-3 p-3 rounded-lg border">
-                  <CheckCircle className="h-5 w-5 text-eco-success" />
-                  <div className="flex-1">
-                    <p className="font-medium text-sm">{activity.action}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {activity.collector && `${activity.collector} • `}
-                      {activity.location && `${activity.location} • `}
-                      {activity.time}
-                    </p>
+            {approvedReports.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No approved reports yet.
+              </p>
+            ) : (
+              <div className="space-y-4">
+                {approvedReports.map(report => (
+                  <div
+                    key={report.id}
+                    className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-lg border"
+                  >
+                    <CheckCircle className="h-5 w-5 text-eco-success" />
+
+                    <div className="flex-1">
+                      <p className="font-medium text-sm">
+                        Report #{report.id.toString().slice(-6)}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {report.collectorEmail || 'Collector'} •{' '}
+                        {new Date(report.submittedAt).toLocaleString()}
+                      </p>
+
+                      {report.verificationComment && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {report.verificationComment}
+                        </p>
+                      )}
+
+                      {(report.nearestDustbinName ||
+                        report.disposalDistance !== null) && (
+                          <p className="text-xs text-muted-foreground mt-1">
+                            {report.nearestDustbinName
+                              ? `Nearest bin: ${report.nearestDustbinName}`
+                              : 'Nearest bin: —'}
+                            {typeof report.disposalDistance === 'number'
+                              ? ` • Distance: ${report.disposalDistance} m`
+                              : ''}
+                          </p>
+                        )}
+                    </div>
+
+                    <Badge variant="default">
+                      +{report.points || 0} pts
+                    </Badge>
                   </div>
-                  {activity.points && (
-                    <Badge variant="default">+{activity.points} pts</Badge>
-                  )}
-                </div>
-              ))}
-            </div>
+                ))}
+              </div>
+            )}
           </CardContent>
         </Card>
       </div>
+
+      {/* Recent Activity */}
+      <Card className="animate-slide-up" style={{ animationDelay: '0.4s' }}>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Activity className="h-5 w-5 text-eco-forest-primary" />
+            Recent Activity
+          </CardTitle>
+          <CardDescription>
+            Your recent actions and system updates
+          </CardDescription>
+        </CardHeader>
+
+        <CardContent>
+          <div className="space-y-4">
+            {recentActivity.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                No activity recorded yet.
+              </p>
+            ) : (
+              recentActivity.map(activity => (
+                <div
+                  key={activity.id}
+                  className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-lg border"
+                >
+                  <CheckCircle className="h-5 w-5 text-eco-success" />
+
+                  <div className="flex-1">
+                    <p className="font-medium text-sm capitalize">
+                      {activity.status}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {activity.collectorEmail || 'Collector'} •{' '}
+                      {new Date(activity.submittedAt).toLocaleString()}
+                    </p>
+                  </div>
+
+                  {activity.status === 'approved' ? (
+                    <Badge variant="default">
+                      +{activity.points} pts
+                    </Badge>
+                  ) : (
+                    <Badge variant="secondary">No points</Badge>
+                  )}
+                </div>
+              ))
+            )}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Collector Performance Stats */}
+      <Card className="animate-slide-up" style={{ animationDelay: '0.5s' }}>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Users className="h-5 w-5 text-eco-ocean" />
+            Collector Performance
+          </CardTitle>
+          <CardDescription>
+            Overview of waste collection by active collectors
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm text-left">
+              <thead className="bg-muted text-muted-foreground">
+                <tr>
+                  <th className="p-3 font-medium">Collector</th>
+                  <th className="p-3 font-medium">Reports</th>
+                  <th className="p-3 font-medium">Points</th>
+                  <th className="p-3 font-medium">Est. Weight</th>
+                  <th className="p-3 font-medium">Last Active</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {data?.collectors.stats && data.collectors.stats.length > 0 ? (
+                  data.collectors.stats.map((stat) => (
+                    <tr key={stat._id} className="hover:bg-muted/50">
+                      <td className="p-3 font-medium">{stat._id}</td>
+                      <td className="p-3">{stat.totalReports}</td>
+                      <td className="p-3">{stat.totalPoints}</td>
+                      <td className="p-3">{(stat.totalWeight || 0).toFixed(1)} kg</td>
+                      <td className="p-3">{new Date(stat.lastActive).toLocaleDateString()}</td>
+                    </tr>
+                  ))
+                ) : (
+                  <tr>
+                    <td colSpan={5} className="p-4 text-center text-muted-foreground">
+                      No data available
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </CardContent>
+      </Card>
     </div>
   );
 };

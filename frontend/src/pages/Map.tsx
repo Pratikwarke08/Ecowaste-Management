@@ -22,16 +22,20 @@ export default function MapPage() {
   const [userRole, setUserRole] = useState<'collector' | 'employee' | null>(null);
   const [mapFilter, setMapFilter] = useState<'all' | 'dustbins' | 'incidents'>('all');
 
+  const [selectedDustbin, setSelectedDustbin] = useState<Dustbin | null>(null);
+  const [currentDustbinImage, setCurrentDustbinImage] = useState<string | null>(null);
+  const [imageLoading, setImageLoading] = useState(false);
+
   useEffect(() => {
     // Get user role from local storage or context
     const storedRole = localStorage.getItem('userType') as 'collector' | 'employee' | null;
-    
+
     // Redirect collectors to dashboard
     if (storedRole === 'collector') {
       navigate('/dashboard');
       return;
     }
-    
+
     setUserRole(storedRole);
 
     const loadData = async () => {
@@ -82,17 +86,42 @@ export default function MapPage() {
     }
   };
 
-  const handleDustbinSelect = (bin: Dustbin | null) => {
-    if (bin && !deploymentMode) {
-      // Optional: navigate to dustbin details or show more info
-      console.log("Selected dustbin", bin);
+  const handleDustbinSelect = async (bin: Dustbin | null) => {
+    if (!bin || deploymentMode) return;
+
+    setSelectedDustbin(bin);
+    setCurrentDustbinImage(null);
+
+    try {
+      setImageLoading(true);
+
+      const res = await apiFetch(
+        `/reports/latest-disposal-image?dustbinId=${bin._id}`
+      );
+
+      if (res.ok) {
+        const data = await res.json();
+        if (data?.disposalImageBase64) {
+          setCurrentDustbinImage(data.disposalImageBase64);
+          return;
+        }
+      }
+
+      // Fallback to initial deployment image
+      setCurrentDustbinImage((bin as any)?.photoBase64 || null);
+
+    } catch (e) {
+      console.error("Failed to load dustbin image", e);
+      setCurrentDustbinImage((bin as any)?.photoBase64 || null);
+    } finally {
+      setImageLoading(false);
     }
   };
 
   return (
     <div className="min-h-screen bg-background pb-20 lg:pb-0 lg:pl-64">
       <Navigation userRole={userRole || 'collector'} />
-      
+
       <div className="h-[calc(100vh-80px)] lg:h-screen w-full relative">
         {loading ? (
           <div className="flex items-center justify-center h-full">

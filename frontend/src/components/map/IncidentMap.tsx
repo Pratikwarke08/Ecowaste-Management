@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, Polyline, CircleMarker, useMap } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L, { LatLngExpression } from 'leaflet';
@@ -40,16 +40,55 @@ interface Props {
   onSelect?: (incident: Incident | null) => void;
 }
 
+function AdaptiveZoom() {
+  const map = useMap();
+  const lastTimeRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const container = map.getContainer();
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+
+      const now = performance.now();
+      const last = lastTimeRef.current;
+      lastTimeRef.current = now;
+
+      const deltaTime = last ? now - last : 100;
+      const direction = e.deltaY > 0 ? -1 : 1;
+
+      let zoomFactor = 0.05;
+      if (deltaTime < 40) zoomFactor = 0.5;
+      else if (deltaTime < 80) zoomFactor = 0.25;
+      else if (deltaTime < 150) zoomFactor = 0.125;
+
+      map.setZoom(map.getZoom() + direction * zoomFactor, { animate: false });
+    };
+
+    container.addEventListener('wheel', onWheel, { passive: false });
+    return () => container.removeEventListener('wheel', onWheel);
+  }, [map]);
+
+  return null;
+}
+
 function FitToContent({ userLocation, incidents }: { userLocation: { lat: number; lng: number } | null; incidents: Incident[] }) {
   const map = useMap();
+  const fittedRef = useRef(false);
+
   useEffect(() => {
+    if (fittedRef.current) return;
+
     const points: LatLngExpression[] = [];
     if (userLocation) points.push([userLocation.lat, userLocation.lng]);
     incidents.forEach(i => points.push([i.coordinates.lat, i.coordinates.lng]));
     if (points.length === 0) return;
+
     const bounds = L.latLngBounds(points as [number, number][]);
-    map.fitBounds(bounds.pad(0.2));
+    map.fitBounds(bounds.pad(0.2), { maxZoom: 19, animate: false });
+    fittedRef.current = true;
   }, [map, userLocation, incidents]);
+
   return null;
 }
 
@@ -59,14 +98,14 @@ export default function IncidentMap({ userLocation, incidents, onSelect }: Props
   const [routeMeta, setRouteMeta] = useState<{ distanceM: number; durationS: number } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  function haversine(a: {lat:number;lng:number}, b: {lat:number;lng:number}) {
+  function haversine(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
     const R = 6371e3;
     const toRad = (x: number) => x * Math.PI / 180;
     const dLat = toRad(b.lat - a.lat);
     const dLng = toRad(b.lng - a.lng);
     const lat1 = toRad(a.lat);
     const lat2 = toRad(b.lat);
-    const s = Math.sin(dLat/2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng/2) ** 2;
+    const s = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
     const c = 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
     return R * c; // meters
   }
@@ -109,27 +148,39 @@ export default function IncidentMap({ userLocation, incidents, onSelect }: Props
 
   return (
     <FullscreenMap isFullscreen={isFullscreen} onToggleFullscreen={() => setIsFullscreen(!isFullscreen)}>
-      <MapContainer center={center} zoom={14} style={{ width: '100%', height: '100%' }} scrollWheelZoom={true} {...({ center } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
+      <MapContainer
+        center={center}
+        zoom={19}
+        maxZoom={22}
+        minZoom={1}
+        zoomSnap={0.1}
+        zoomDelta={0.1}
+        wheelPxPerZoomLevel={40}
+        style={{ width: '100%', height: '100%' }}
+        scrollWheelZoom={true}
+        {...({ center } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
       >
         <TileLayer
           attribution='&copy; OpenStreetMap contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          maxZoom={22}
+          maxNativeZoom={19}
           {...({ attribution: '&copy; OpenStreetMap contributors' } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
         />
 
         {userLocation && (
           <Marker position={[userLocation.lat, userLocation.lng]} icon={UserIcon as any} // eslint-disable-line @typescript-eslint/no-explicit-any
-          {...({ icon: UserIcon } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
+            {...({ icon: UserIcon } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
           >
             <Popup>You're here</Popup>
           </Marker>
         )}
 
         {incidents.map((i) => {
-          const distanceLabel = userLocation 
-            ? `${(haversine(userLocation, i.coordinates)/1000).toFixed(2)} km`
+          const distanceLabel = userLocation
+            ? `${(haversine(userLocation, i.coordinates) / 1000).toFixed(2)} km`
             : '';
-          const googleUrl = userLocation 
+          const googleUrl = userLocation
             ? `https://www.google.com/maps/dir/?api=1&origin=${userLocation.lat},${userLocation.lng}&destination=${i.coordinates.lat},${i.coordinates.lng}&travelmode=walking`
             : `https://www.google.com/maps/search/?api=1&query=${i.coordinates.lat},${i.coordinates.lng}`;
           const appleUrl = userLocation
@@ -138,7 +189,7 @@ export default function IncidentMap({ userLocation, incidents, onSelect }: Props
 
           return (
             <>
-              <Marker 
+              <Marker
                 key={i._id}
                 position={[i.coordinates.lat, i.coordinates.lng]}
                 icon={IncidentIcon(selected?._id === i._id) as any} // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -151,7 +202,7 @@ export default function IncidentMap({ userLocation, incidents, onSelect }: Props
                     <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>Urgency: {i.urgency}</div>
                     {routeMeta && selected?._id === i._id && (
                       <div style={{ fontSize: 12, marginBottom: 8 }}>
-                        Route: {(routeMeta.distanceM/1000).toFixed(2)} km • {Math.round(routeMeta.durationS/60)} min
+                        Route: {(routeMeta.distanceM / 1000).toFixed(2)} km • {Math.round(routeMeta.durationS / 60)} min
                       </div>
                     )}
                     <div style={{ marginBottom: 8 }}>
@@ -178,12 +229,12 @@ export default function IncidentMap({ userLocation, incidents, onSelect }: Props
                 </Popup>
               </Marker>
               {userLocation && (
-                <Marker 
-                  key={`${i._id}-distance`} 
-                  position={[i.coordinates.lat, i.coordinates.lng]} 
+                <Marker
+                  key={`${i._id}-distance`}
+                  position={[i.coordinates.lat, i.coordinates.lng]}
                   icon={DistanceIcon(distanceLabel) as any} // eslint-disable-line @typescript-eslint/no-explicit-any
                   {...({ icon: DistanceIcon(distanceLabel) } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
-                  interactive={false} 
+                  interactive={false}
                 />
               )}
             </>
@@ -199,6 +250,7 @@ export default function IncidentMap({ userLocation, incidents, onSelect }: Props
         )}
 
         <FitToContent userLocation={userLocation} incidents={incidents} />
+        <AdaptiveZoom />
       </MapContainer>
     </FullscreenMap>
   );

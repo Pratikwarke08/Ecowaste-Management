@@ -1,4 +1,43 @@
-import { Fragment, useEffect, useMemo, useState } from 'react';
+function AdaptiveZoom() {
+  const map = useMap();
+  const lastTimeRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const container = map.getContainer();
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+
+      const now = performance.now();
+      const last = lastTimeRef.current;
+      lastTimeRef.current = now;
+
+      // Wheel velocity (ms between scrolls)
+      const deltaTime = last ? now - last : 100;
+
+      // Normalize scroll direction
+      const direction = e.deltaY > 0 ? -1 : 1;
+
+      // Dynamic zoom factor (Google-like, 2× slower)
+      let zoomFactor = 0.05; // slower default
+      if (deltaTime < 40) zoomFactor = 0.5;        // very fast scroll
+      else if (deltaTime < 80) zoomFactor = 0.25;  // fast
+      else if (deltaTime < 150) zoomFactor = 0.125; // medium
+
+      const targetZoom = map.getZoom() + direction * zoomFactor;
+      map.setZoom(targetZoom, { animate: false });
+    };
+
+    container.addEventListener('wheel', onWheel, { passive: false });
+
+    return () => {
+      container.removeEventListener('wheel', onWheel);
+    };
+  }, [map]);
+
+  return null;
+}
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, Polyline, CircleMarker } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L, { LatLngExpression } from 'leaflet';
@@ -54,14 +93,21 @@ interface Props {
 
 function FitToContent({ userLocation, dustbins }: { userLocation: { lat: number; lng: number } | null; dustbins: Dustbin[] }) {
   const map = useMap();
+  const fittedRef = useRef(false);
+
   useEffect(() => {
+    if (fittedRef.current) return;
+
     const points: LatLngExpression[] = [];
     if (userLocation) points.push([userLocation.lat, userLocation.lng]);
     dustbins.forEach(b => points.push([b.coordinates.lat, b.coordinates.lng]));
     if (points.length === 0) return;
+
     const bounds = L.latLngBounds(points as [number, number][]);
-    map.fitBounds(bounds.pad(0.2));
+    map.fitBounds(bounds.pad(0.2), { maxZoom: 19, animate: false });
+    fittedRef.current = true;
   }, [map, userLocation, dustbins]);
+
   return null;
 }
 
@@ -71,14 +117,14 @@ export default function DustbinMap({ userLocation, dustbins, onSelect }: Props) 
   const [routeMeta, setRouteMeta] = useState<{ distanceM: number; durationS: number } | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  function haversine(a: {lat:number;lng:number}, b: {lat:number;lng:number}) {
+  function haversine(a: { lat: number; lng: number }, b: { lat: number; lng: number }) {
     const R = 6371e3;
     const toRad = (x: number) => x * Math.PI / 180;
     const dLat = toRad(b.lat - a.lat);
     const dLng = toRad(b.lng - a.lng);
     const lat1 = toRad(a.lat);
     const lat2 = toRad(b.lat);
-    const s = Math.sin(dLat/2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng/2) ** 2;
+    const s = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
     const c = 2 * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
     return R * c; // meters
   }
@@ -137,17 +183,29 @@ export default function DustbinMap({ userLocation, dustbins, onSelect }: Props) 
 
   return (
     <FullscreenMap isFullscreen={isFullscreen} onToggleFullscreen={() => setIsFullscreen(!isFullscreen)}>
-      <MapContainer center={center} zoom={14} style={{ width: '100%', height: '100%' }} scrollWheelZoom={true} {...({ center } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
+      <MapContainer
+        center={center}
+        zoom={19}
+        maxZoom={22}
+        minZoom={1}
+        zoomSnap={2}
+        zoomDelta={2}
+        wheelPxPerZoomLevel={120}
+        style={{ width: '100%', height: '100%' }}
+        scrollWheelZoom={true}
+        {...({ center } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
       >
         <TileLayer
           attribution='&copy; OpenStreetMap contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+          maxZoom={22}
+          maxNativeZoom={19}
           {...({ attribution: '&copy; OpenStreetMap contributors' } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
         />
 
         {userLocation && (
           <Marker position={[userLocation.lat, userLocation.lng]} icon={UserIcon as any} // eslint-disable-line @typescript-eslint/no-explicit-any
-          {...({ icon: UserIcon } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
+            {...({ icon: UserIcon } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
           >
             <Popup>You're here</Popup>
           </Marker>
@@ -172,10 +230,10 @@ export default function DustbinMap({ userLocation, dustbins, onSelect }: Props) 
             markerLng = baseLng + radius * Math.sin(angle);
           }
 
-          const distanceLabel = userLocation 
-            ? `${(haversine(userLocation, bin.coordinates)/1000).toFixed(2)} km`
+          const distanceLabel = userLocation
+            ? `${(haversine(userLocation, bin.coordinates) / 1000).toFixed(2)} km`
             : '';
-          const googleUrl = userLocation 
+          const googleUrl = userLocation
             ? `https://www.google.com/maps/dir/?api=1&origin=${userLocation.lat},${userLocation.lng}&destination=${bin.coordinates.lat},${bin.coordinates.lng}&travelmode=walking`
             : `https://www.google.com/maps/search/?api=1&query=${bin.coordinates.lat},${bin.coordinates.lng}`;
           const appleUrl = userLocation
@@ -184,7 +242,7 @@ export default function DustbinMap({ userLocation, dustbins, onSelect }: Props) 
 
           return (
             <Fragment key={bin._id}>
-              <Marker 
+              <Marker
                 position={[markerLat, markerLng]}
                 icon={DustbinIcon(bin.status, selected?._id === bin._id, bin.urgent) as any} // eslint-disable-line @typescript-eslint/no-explicit-any
                 {...({ icon: DustbinIcon(bin.status, selected?._id === bin._id, bin.urgent) } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
@@ -201,7 +259,7 @@ export default function DustbinMap({ userLocation, dustbins, onSelect }: Props) 
                     </div>
                     {routeMeta && selected?._id === bin._id && (
                       <div style={{ fontSize: 12, marginBottom: 8 }}>
-                        Route: {(routeMeta.distanceM/1000).toFixed(2)} km • {Math.round(routeMeta.durationS/60)} min
+                        Route: {(routeMeta.distanceM / 1000).toFixed(2)} km • {Math.round(routeMeta.durationS / 60)} min
                       </div>
                     )}
                     <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
@@ -224,11 +282,11 @@ export default function DustbinMap({ userLocation, dustbins, onSelect }: Props) 
                 </Popup>
               </Marker>
               {userLocation && (
-                <Marker 
-                  position={[markerLat, markerLng]} 
+                <Marker
+                  position={[markerLat, markerLng]}
                   icon={DistanceIcon(distanceLabel) as any} // eslint-disable-line @typescript-eslint/no-explicit-any
                   {...({ icon: DistanceIcon(distanceLabel) } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
-                  interactive={false} 
+                  interactive={false}
                 />
               )}
             </Fragment>
@@ -244,6 +302,7 @@ export default function DustbinMap({ userLocation, dustbins, onSelect }: Props) 
         )}
 
         <FitToContent userLocation={userLocation} dustbins={dustbins} />
+        <AdaptiveZoom />
       </MapContainer>
     </FullscreenMap>
   );

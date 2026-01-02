@@ -1,9 +1,9 @@
-import { Suspense, lazy, useEffect } from "react";
+import { Suspense, lazy, useEffect, useState, ReactNode } from "react";
 import { Toaster } from "@/components/ui/toaster";
 import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { BrowserRouter, Routes, Route } from "react-router-dom";
+import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { bootstrapThemeFromStorage } from "@/lib/theme";
 
 // Lazy load all pages for code splitting
@@ -25,7 +25,7 @@ const CaptureIncident = lazy(() => import('./pages/CaptureIncident'));
 const IncidentsReview = lazy(() => import('./pages/IncidentsReview'));
 const KeepMeAlive = lazy(() => import('./pages/KeepMeAlive'));
 const SmogTowerWizard = lazy(() => import('./pages/smogtower'));
-const MapPage = lazy(() => import('./pages/Map'));
+const MapPage = lazy(() => import("./pages/Map"));
 
 // Optimized QueryClient with caching
 const queryClient = new QueryClient({
@@ -40,7 +40,6 @@ const queryClient = new QueryClient({
   },
 });
 
-// Loading component
 const PageLoader = () => (
   <div className="min-h-screen bg-background flex items-center justify-center">
     <div className="flex flex-col items-center gap-4">
@@ -50,9 +49,48 @@ const PageLoader = () => (
   </div>
 );
 
+const ProtectedRoute = ({ children }: { children: ReactNode }) => {
+  const location = useLocation();
+  const token = localStorage.getItem("token");
+
+  if (!token) {
+    // Hard redirect + history replacement
+    window.history.replaceState(null, "", "/");
+    return <Navigate to="/" replace state={{ from: location }} />;
+  }
+
+  return children;
+};
+
+const getAuthKey = () => localStorage.getItem("token") || "guest";
+
 const App = () => {
+  const [authKey, setAuthKey] = useState(getAuthKey());
   useEffect(() => {
     bootstrapThemeFromStorage();
+
+    const syncAuth = () => setAuthKey(getAuthKey());
+    window.addEventListener("storage", syncAuth);
+
+    return () => window.removeEventListener("storage", syncAuth);
+  }, []);
+
+  useEffect(() => {
+    const enforceAuth = () => {
+      const token = localStorage.getItem("token");
+      const path = window.location.pathname;
+
+      // If user is NOT authenticated and tries to access anything except "/"
+      if (!token && path !== "/") {
+        window.history.replaceState(null, "", "/");
+        window.location.replace("/");
+      }
+    };
+
+    enforceAuth();
+    window.addEventListener("popstate", enforceAuth);
+
+    return () => window.removeEventListener("popstate", enforceAuth);
   }, []);
 
   return (
@@ -62,25 +100,144 @@ const App = () => {
         <Sonner />
         <BrowserRouter>
           <Suspense fallback={<PageLoader />}>
-            <Routes>
+            <Routes key={authKey}>
               <Route path="/" element={<Index />} />
-              <Route path="/dashboard" element={<Dashboard />} />
-              <Route path="/capture" element={<Capture />} />
-              <Route path="/rewards" element={<Rewards />} />
-              <Route path="/keep-alive" element={<KeepMeAlive />} />
-              <Route path="/smog-tower" element={<SmogTowerWizard />} />
-              <Route path="/community" element={<Community />} />
-              <Route path="/complaints" element={<Complaints />} />
-              <Route path="/dustbins" element={<Dustbins />} />
-              <Route path="/verify" element={<Verify />} />
-              <Route path="/progress" element={<Progress />} />
-              <Route path="/settings" element={<Settings />} />
-              <Route path="/dustbins-list" element={<DustbinsList />} />
-              <Route path="/pending-reviews" element={<PendingReviews />} />
-              <Route path="/add-dustbin" element={<AddDustbin />} />
-              <Route path="/capture-incident" element={<CaptureIncident />} />
-              <Route path="/incidents" element={<IncidentsReview />} />
-              <Route path="/map" element={<MapPage />} />
+              <Route
+                path="/dashboard"
+                element={
+                  <ProtectedRoute>
+                    <Dashboard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/capture"
+                element={
+                  <ProtectedRoute>
+                    <Capture />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/rewards"
+                element={
+                  <ProtectedRoute>
+                    <Rewards />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/keep-alive"
+                element={
+                  <ProtectedRoute>
+                    <KeepMeAlive />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/smog-tower"
+                element={
+                  <ProtectedRoute>
+                    <SmogTowerWizard />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/community"
+                element={
+                  <ProtectedRoute>
+                    <Community />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/complaints"
+                element={
+                  <ProtectedRoute>
+                    <Complaints />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dustbins"
+                element={
+                  <ProtectedRoute>
+                    <Dustbins />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/verify"
+                element={
+                  <ProtectedRoute>
+                    <Verify />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/progress"
+                element={
+                  <ProtectedRoute>
+                    <Progress />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/settings"
+                element={
+                  <ProtectedRoute>
+                    <Settings />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/dustbins-list"
+                element={
+                  <ProtectedRoute>
+                    <DustbinsList />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/pending-reviews"
+                element={
+                  <ProtectedRoute>
+                    <PendingReviews />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/add-dustbin"
+                element={
+                  <ProtectedRoute>
+                    <AddDustbin />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/capture-incident"
+                element={
+                  <ProtectedRoute>
+                    <CaptureIncident />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/incidents"
+                element={
+                  <ProtectedRoute>
+                    <IncidentsReview />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/map"
+                element={
+                  <ProtectedRoute>
+                    <MapPage />
+                  </ProtectedRoute>
+                }
+              />
               {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
               <Route path="*" element={<NotFound />} />
             </Routes>

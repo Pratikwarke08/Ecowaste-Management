@@ -194,7 +194,7 @@ const AddDustbin = () => {
       setManualLat("");
       setManualLng("");
       setManualMode(false);
-      navigate('/employee/dashboard');
+      navigate(-1);
     } catch (error: unknown) {
       toast({
         title: "Error",
@@ -400,8 +400,8 @@ const AddDustbin = () => {
           </Card>
         </div>
       </main>
-      
-      
+
+
     </div>
   );
 };

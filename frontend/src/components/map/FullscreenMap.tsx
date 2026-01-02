@@ -16,7 +16,10 @@ export default function FullscreenMap({ children, isFullscreen, onToggleFullscre
 
   if (!isClient) {
     return (
-      <div className="relative w-full h-full">
+      <div
+        className="relative w-full h-full"
+        style={{ touchAction: 'none', overscrollBehavior: 'contain' }}
+      >
         {children}
       </div>
     );
@@ -24,8 +27,14 @@ export default function FullscreenMap({ children, isFullscreen, onToggleFullscre
 
   if (isFullscreen) {
     return (
-      <div className="fixed inset-0 z-[9999] bg-background">
-        <div className="relative w-full h-full">
+      <div
+        className="fixed inset-0 z-[9999] bg-background"
+        style={{ touchAction: 'none', overscrollBehavior: 'contain' }}
+      >
+        <div
+          className="relative w-full h-full"
+          style={{ touchAction: 'none', overscrollBehavior: 'contain' }}
+        >
           {children}
           <button
             onClick={onToggleFullscreen}
@@ -40,7 +49,10 @@ export default function FullscreenMap({ children, isFullscreen, onToggleFullscre
   }
 
   return (
-    <div className="relative w-full h-full">
+    <div
+      className="relative w-full h-full"
+      style={{ touchAction: 'none', overscrollBehavior: 'contain' }}
+    >
       {children}
       <button
         onClick={onToggleFullscreen}

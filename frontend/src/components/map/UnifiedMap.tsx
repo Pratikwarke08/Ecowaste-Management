@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L, { LatLngExpression } from 'leaflet';
@@ -61,24 +61,62 @@ function MapEvents({ onMapClick, deploymentMode }: { onMapClick?: (lat: number, 
 
 function FitToContent({ userLocation, dustbins, incidents }: { userLocation: { lat: number; lng: number } | null; dustbins: Dustbin[]; incidents: Incident[] }) {
   const map = useMap();
+  const fittedRef = useRef(false);
+
   useEffect(() => {
+    if (fittedRef.current) return;
+
     const points: LatLngExpression[] = [];
     if (userLocation) points.push([userLocation.lat, userLocation.lng]);
     dustbins.forEach(b => points.push([b.coordinates.lat, b.coordinates.lng]));
     incidents.forEach(i => points.push([i.coordinates.lat, i.coordinates.lng]));
-    
+
     if (points.length === 0) return;
     const bounds = L.latLngBounds(points as [number, number][]);
-    map.fitBounds(bounds.pad(0.2));
+    map.fitBounds(bounds.pad(0.2), { maxZoom: 19, animate: false });
+    fittedRef.current = true;
   }, [map, userLocation, dustbins, incidents]);
+
   return null;
 }
 
-export default function UnifiedMap({ 
-  userLocation, 
-  dustbins, 
-  incidents, 
-  onDustbinSelect, 
+function AdaptiveZoom() {
+  const map = useMap();
+  const lastTimeRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    const container = map.getContainer();
+
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+
+      const now = performance.now();
+      const last = lastTimeRef.current;
+      lastTimeRef.current = now;
+
+      const deltaTime = last ? now - last : 100;
+      const direction = e.deltaY > 0 ? -1 : 1;
+
+      let zoomFactor = 0.05;
+      if (deltaTime < 40) zoomFactor = 0.5;
+      else if (deltaTime < 80) zoomFactor = 0.25;
+      else if (deltaTime < 150) zoomFactor = 0.125;
+
+      map.setZoom(map.getZoom() + direction * zoomFactor, { animate: false });
+    };
+
+    container.addEventListener('wheel', onWheel, { passive: false });
+    return () => container.removeEventListener('wheel', onWheel);
+  }, [map]);
+
+  return null;
+}
+
+export default function UnifiedMap({
+  userLocation,
+  dustbins,
+  incidents,
+  onDustbinSelect,
   onIncidentSelect,
   onMapClick,
   deploymentMode,
@@ -88,27 +126,37 @@ export default function UnifiedMap({
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
+  const [currentDustbinImage, setCurrentDustbinImage] = useState<string | null>(null);
+  const [imageLoading, setImageLoading] = useState(false);
+
   return (
     <FullscreenMap isFullscreen={isFullscreen} onToggleFullscreen={() => setIsFullscreen(!isFullscreen)}>
       <div className={`relative w-full h-full rounded-lg overflow-hidden border shadow-sm ${deploymentMode ? 'cursor-crosshair' : ''}`}>
         <MapContainer
           center={userLocation ? [userLocation.lat, userLocation.lng] : [20.5937, 78.9629]}
-          zoom={13}
+          zoom={19}
+          maxZoom={22}
+          minZoom={1}
+          zoomSnap={0.1}
+          zoomDelta={0.1}
+          wheelPxPerZoomLevel={40}
           style={{ height: '100%', width: '100%' }}
           {...({ center: userLocation ? [userLocation.lat, userLocation.lng] : [20.5937, 78.9629] } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
         >
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+            maxZoom={22}
+            maxNativeZoom={19}
             {...({ attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
           />
-
+          <AdaptiveZoom />
           <FitToContent userLocation={userLocation} dustbins={dustbins} incidents={incidents} />
           <MapEvents onMapClick={onMapClick} deploymentMode={deploymentMode} />
 
           {userLocation && (
-            <Marker 
-              position={[userLocation.lat, userLocation.lng]} 
+            <Marker
+              position={[userLocation.lat, userLocation.lng]}
               icon={UserIcon as any} // eslint-disable-line @typescript-eslint/no-explicit-any
               {...({ icon: UserIcon } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
             >
@@ -127,41 +175,90 @@ export default function UnifiedMap({
                   setSelectedIncident(null);
                   onDustbinSelect?.(bin);
                   onIncidentSelect?.(null);
+
+                  (async () => {
+                    try {
+                      setImageLoading(true);
+                      setCurrentDustbinImage(null);
+
+                      const token = localStorage.getItem("token");
+                      const res = await fetch(
+                        `/api/reports/latest-disposal-image?dustbinId=${bin._id}`,
+                        {
+                          headers: {
+                            Authorization: token ? `Bearer ${token}` : "",
+                          },
+                        }
+                      );
+
+                      if (res.ok) {
+                        const data = await res.json();
+                        if (data?.disposalImageBase64) {
+                          const img = data.disposalImageBase64;
+                          setCurrentDustbinImage(
+                            img.startsWith("data:") ? img : `data:image/png;base64,${img}`
+                          );
+                          return;
+                        }
+                      }
+
+                      // Fallback to deployment image
+                      if (bin.photoBase64) {
+                        setCurrentDustbinImage(
+                          bin.photoBase64.startsWith("data:")
+                            ? bin.photoBase64
+                            : `data:image/png;base64,${bin.photoBase64}`
+                        );
+                      } else if ((bin as any).initialPhotoBase64) {
+                        const img = (bin as any).initialPhotoBase64;
+                        setCurrentDustbinImage(
+                          img.startsWith("data:") ? img : `data:image/png;base64,${img}`
+                        );
+                      }
+                    } catch {
+                      if (bin.photoBase64) {
+                        setCurrentDustbinImage(
+                          bin.photoBase64.startsWith("data:")
+                            ? bin.photoBase64
+                            : `data:image/png;base64,${bin.photoBase64}`
+                        );
+                      }
+                    } finally {
+                      setImageLoading(false);
+                    }
+                  })();
                 }
               }}
             >
               <Popup>
                 <div className="p-2 min-w-[200px]">
-                  {/* Dustbin Image Logic */}
-                  {userRole === 'collector' && bin.initialPhotoBase64 && (
-                    <div className="mb-2">
-                      <img 
-                        src={`data:image/png;base64,${bin.initialPhotoBase64}`} 
-                        alt="Initial State" 
+                  <div className="mb-2">
+                    <p className="text-xs font-medium text-gray-600 mb-1">Current State</p>
+
+                    {imageLoading ? (
+                      <div className="w-full h-32 flex items-center justify-center text-xs text-gray-500 border rounded-md">
+                        Loading image…
+                      </div>
+                    ) : currentDustbinImage ? (
+                      <img
+                        src={currentDustbinImage}
+                        alt="Current Dustbin State"
                         className="w-full h-32 object-cover rounded-md border"
                       />
-                      <p className="text-[10px] text-gray-500 mt-1">Initial Setup Image</p>
-                    </div>
-                  )}
-                  {userRole === 'employee' && bin.photoBase64 && (
-                    <div className="mb-2">
-                      <img 
-                        src={`data:image/png;base64,${bin.photoBase64}`} 
-                        alt="Current State" 
-                        className="w-full h-32 object-cover rounded-md border"
-                      />
-                      <p className="text-[10px] text-gray-500 mt-1">Latest Status Image</p>
-                    </div>
-                  )}
+                    ) : (
+                      <div className="w-full h-32 flex items-center justify-center text-xs text-gray-500 border rounded-md">
+                        No image available
+                      </div>
+                    )}
+                  </div>
 
                   <h3 className="font-bold text-lg">{bin.name}</h3>
                   <p className="text-sm text-gray-600 mb-2">{bin.sector || 'Unknown Sector'}</p>
                   <div className="flex gap-2 mb-2">
-                    <span className={`px-2 py-0.5 rounded text-xs font-medium capitalize ${
-                      bin.status === 'active' ? 'bg-green-100 text-green-800' :
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium capitalize ${bin.status === 'active' ? 'bg-green-100 text-green-800' :
                       bin.status === 'full' ? 'bg-red-100 text-red-800' :
-                      'bg-gray-100 text-gray-800'
-                    }`}>
+                        'bg-gray-100 text-gray-800'
+                      }`}>
                       {bin.status}
                     </span>
                     <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 capitalize">
@@ -171,7 +268,7 @@ export default function UnifiedMap({
                   <div className="text-xs text-gray-500 mt-2">
                     Fill Level: {bin.fillLevel || 0}%
                     <div className="w-full h-1.5 bg-gray-200 rounded-full mt-1 overflow-hidden">
-                      <div 
+                      <div
                         className={`h-full ${bin.fillLevel && bin.fillLevel > 80 ? 'bg-red-500' : 'bg-green-500'}`}
                         style={{ width: `${bin.fillLevel || 0}%` }}
                       />
@@ -196,16 +293,15 @@ export default function UnifiedMap({
                 }
               }}
             >
-               <Popup>
+              <Popup>
                 <div className="p-2 min-w-[200px]">
                   <h3 className="font-bold text-lg capitalize">{incident.category}</h3>
                   <p className="text-sm text-gray-600 mb-2">{incident.description || 'No description'}</p>
                   <div className="flex gap-2 mb-2">
-                    <span className={`px-2 py-0.5 rounded text-xs font-medium capitalize ${
-                      incident.urgency === 'critical' ? 'bg-red-100 text-red-800' :
+                    <span className={`px-2 py-0.5 rounded text-xs font-medium capitalize ${incident.urgency === 'critical' ? 'bg-red-100 text-red-800' :
                       incident.urgency === 'high' ? 'bg-orange-100 text-orange-800' :
-                      'bg-yellow-100 text-yellow-800'
-                    }`}>
+                        'bg-yellow-100 text-yellow-800'
+                      }`}>
                       {incident.urgency} Priority
                     </span>
                   </div>
@@ -214,7 +310,7 @@ export default function UnifiedMap({
             </Marker>
           ))}
         </MapContainer>
-        
+
         {deploymentMode && (
           <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] bg-black/80 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg pointer-events-none">
             Click on map to place dustbin

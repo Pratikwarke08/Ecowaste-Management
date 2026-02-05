@@ -42,7 +42,7 @@ export default function CaptureIncident() {
   const [locationLoading, setLocationLoading] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
   const [category, setCategory] = useState('pothole');
-  const [urgency, setUrgency] = useState<'low'|'medium'|'high'|'critical'>('medium');
+  const [urgency, setUrgency] = useState<'low' | 'medium' | 'high' | 'critical'>('medium');
   const [description, setDescription] = useState('');
   const [manualMode, setManualMode] = useState(false);
   const [manualLat, setManualLat] = useState('');
@@ -218,7 +218,7 @@ export default function CaptureIncident() {
 
               <div className="flex flex-col md:flex-row gap-6">
                 <div className="flex-1 flex flex-col items-center">
-                  <div className="w-full h-48 flex items-center justify-center border-2 border-dashed border-eco-forest-primary/40 rounded-lg bg-muted/40 mb-4 relative">
+                  <div className="w-full h-38 flex items-center justify-center border-2 border-dashed border-eco-forest-primary/40 rounded-lg bg-muted/40 mb-4 relative">
                     {!showCamera && !image && (
                       <div className="flex flex-col md:flex-row gap-3 w-full h-full items-center justify-center">
                         <Button onClick={startCamera} variant="outline" className="flex flex-col items-center justify-center h-full bg-transparent border-0 shadow-none">
@@ -238,8 +238,8 @@ export default function CaptureIncident() {
 
                     {showCamera && (
                       <div className="flex flex-col items-center w-full">
-                        <video ref={videoRef} width={320} height={192} autoPlay playsInline style={{ background:'#000', borderRadius:8, width:'100%', height:'12rem', objectFit:'cover', zIndex:2 }} />
-                        <canvas ref={canvasRef} width={320} height={192} style={{ display:'none' }} />
+                        <video ref={videoRef} width={320} height={192} autoPlay playsInline style={{ background: '#000', borderRadius: 8, width: '100%', height: '12rem', objectFit: 'cover', zIndex: 2 }} />
+                        <canvas ref={canvasRef} width={320} height={192} style={{ display: 'none' }} />
                         <Button onClick={capturePhoto} variant="eco" className="w-full mt-2">
                           <Camera className="mr-2 h-4 w-4" />
                           Take Photo{!manualMode && ' & Get Location'}
@@ -311,8 +311,8 @@ export default function CaptureIncident() {
                       <img src={inc.imageBase64} alt={inc.category} className="w-20 h-16 object-cover rounded" />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between gap-2">
-                          <div className="font-medium text-sm capitalize truncate">{inc.category.replace(/_/g,' ')}</div>
-                          <Badge className="capitalize whitespace-nowrap">{inc.status.replace(/_/g,' ')}</Badge>
+                          <div className="font-medium text-sm capitalize truncate">{inc.category.replace(/_/g, ' ')}</div>
+                          <Badge className="capitalize whitespace-nowrap">{inc.status.replace(/_/g, ' ')}</Badge>
                         </div>
                         <div className="text-xs text-muted-foreground truncate">{inc.description || 'No description'}</div>
                         <div className="text-xs text-muted-foreground mt-1">

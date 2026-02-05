@@ -134,9 +134,9 @@ const EmployeeDashboard = () => {
       ['Longitude Range', `${stat.minLng?.toFixed(6) || 'N/A'} to ${stat.maxLng?.toFixed(6) || 'N/A'}`],
     ];
 
-    const csvContent = "data:text/csv;charset=utf-8," 
+    const csvContent = "data:text/csv;charset=utf-8,"
       + reportData.map(e => e.join(",")).join("\n");
-    
+
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
@@ -483,38 +483,45 @@ const EmployeeDashboard = () => {
         </CardHeader>
 
         <CardContent>
-          <div className="space-y-4">
+          <div className="space-y-2">
             {recentActivity.length === 0 ? (
               <p className="text-sm text-muted-foreground">
                 No activity recorded yet.
               </p>
             ) : (
-              recentActivity.map(activity => (
-                <div
-                  key={activity.id}
-                  className="flex flex-col sm:flex-row sm:items-center gap-3 p-3 rounded-lg border"
-                >
-                  <CheckCircle className="h-5 w-5 text-eco-success" />
+              <ul className="divide-y max-h-72 overflow-y-auto pr-1 scroll-smooth">
+                {recentActivity.map((activity) => (
+                  <li
+                    key={activity.id}
+                    className="flex items-center gap-3 py-3"
+                  >
+                    {/* Icon */}
+                    <CheckCircle className="h-4 w-4 text-eco-success shrink-0" />
 
-                  <div className="flex-1">
-                    <p className="font-medium text-sm capitalize">
-                      {activity.status}
-                    </p>
-                    <p className="text-xs text-muted-foreground">
-                      {activity.collectorEmail || 'Collector'} •{' '}
-                      {new Date(activity.submittedAt).toLocaleString()}
-                    </p>
-                  </div>
+                    {/* Text */}
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-medium capitalize truncate">
+                        {activity.status}
+                      </p>
+                      <p className="text-xs text-muted-foreground truncate">
+                        {activity.collectorEmail || 'Collector'} •{' '}
+                        {new Date(activity.submittedAt).toLocaleDateString()}
+                      </p>
+                    </div>
 
-                  {activity.status === 'approved' ? (
-                    <Badge variant="default">
-                      +{activity.points} pts
-                    </Badge>
-                  ) : (
-                    <Badge variant="secondary">No points</Badge>
-                  )}
-                </div>
-              ))
+                    {/* Badge */}
+                    {activity.status === 'approved' ? (
+                      <Badge className="text-xs shrink-0">
+                        +{activity.points}
+                      </Badge>
+                    ) : (
+                      <Badge variant="secondary" className="text-xs shrink-0">
+                        —
+                      </Badge>
+                    )}
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
         </CardContent>

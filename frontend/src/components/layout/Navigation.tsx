@@ -2,13 +2,13 @@ import { useState } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
-import { 
-  Home, 
-  Camera, 
-  MapPin, 
-  Award, 
-  Users, 
-  Settings, 
+import {
+  Home,
+  Camera,
+  MapPin,
+  Award,
+  Users,
+  Settings,
   Menu,
   X,
   Recycle,
@@ -17,7 +17,8 @@ import {
   AlertTriangle,
   HeartHandshake,
   Leaf,
-  Map
+  Map,
+  LogOut
 } from 'lucide-react';
 
 interface NavigationProps {
@@ -27,6 +28,11 @@ interface NavigationProps {
 const Navigation = ({ userRole }: NavigationProps) => {
   const [isOpen, setIsOpen] = useState(false);
   const location = useLocation();
+
+  const handleLogout = () => {
+    localStorage.clear();
+    window.location.href = '/';
+  };
 
   const collectorNavItems = [
     { href: '/dashboard', label: 'Dashboard', icon: Home },
@@ -38,7 +44,7 @@ const Navigation = ({ userRole }: NavigationProps) => {
     { href: '/community', label: 'Community', icon: Users },
     { href: '/settings', label: 'Settings', icon: Settings },
     { href: '/smog-tower', label: 'Smog Tower', icon: Leaf },
-
+    { href: 'logout', label: 'Logout', icon: LogOut },
   ];
 
   const employeeNavItems = [
@@ -50,6 +56,7 @@ const Navigation = ({ userRole }: NavigationProps) => {
     { href: '/complaints', label: 'Complaints', icon: MessageSquare },
     { href: '/progress', label: 'Progress Tracking', icon: Users },
     { href: '/settings', label: 'Settings', icon: Settings },
+    { href: 'logout', label: 'Logout', icon: LogOut },
   ];
 
   const navItems = userRole === 'collector' ? collectorNavItems : employeeNavItems;
@@ -78,27 +85,53 @@ const Navigation = ({ userRole }: NavigationProps) => {
               <Recycle className="h-6 w-6 text-eco-forest-primary" />
               <span className="font-bold text-lg">EcoWaste</span>
             </div>
-            <nav className="space-y-2">
-              {navItems.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <NavLink
-                    key={item.href}
-                    to={item.href}
-                    onClick={() => setIsOpen(false)}
-                    className={cn(
-                      "flex items-center gap-3 px-3 py-2 rounded-lg transition-all duration-200",
-                      isActive(item.href)
-                        ? "bg-primary text-primary-foreground shadow-md"
-                        : "hover:bg-muted"
-                    )}
-                  >
-                    <Icon className="h-5 w-5" />
-                    <span className="font-medium">{item.label}</span>
-                  </NavLink>
-                );
-              })}
-            </nav>
+            <div className="flex flex-col h-full">
+              <nav className="space-y-2">
+                {navItems.map((item) => {
+                  if (item.href === 'logout') {
+                    const Icon = item.icon;
+                    return (
+                      <button
+                        key="logout"
+                        onClick={handleLogout}
+                        className="flex items-center gap-3 px-4 py-3 w-full rounded-lg text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
+                      >
+                        <Icon className="h-5 w-5" />
+                        <span className="font-medium">Logout</span>
+                      </button>
+                    );
+                  }
+
+                  const Icon = item.icon;
+                  return (
+                    <NavLink
+                      key={item.href}
+                      to={item.href}
+                      onClick={() => setIsOpen(false)}
+                      className={cn(
+                        "flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200",
+                        isActive(item.href)
+                          ? "bg-primary text-primary-foreground shadow-md"
+                          : "hover:bg-muted"
+                      )}
+                    >
+                      <Icon className="h-5 w-5" />
+                      <span className="font-medium">{item.label}</span>
+                    </NavLink>
+                  );
+                })}
+              </nav>
+
+              <div className="mt-auto pt-6">
+                <button
+                  onClick={handleLogout}
+                  className="flex items-center gap-3 px-3 py-2 w-full rounded-lg text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
+                >
+                  <LogOut className="h-5 w-5" />
+                  <span className="font-medium">Logout</span>
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -113,25 +146,51 @@ const Navigation = ({ userRole }: NavigationProps) => {
           </div>
 
           {/* Navigation Items */}
-          <div className="space-y-2">
-            {navItems.map((item) => {
-              const Icon = item.icon;
-              return (
-                <NavLink
-                  key={item.href}
-                  to={item.href}
-                  className={cn(
-                    "flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200",
-                    isActive(item.href)
-                      ? "bg-primary text-primary-foreground shadow-md"
-                      : "hover:bg-muted"
-                  )}
-                >
-                  <Icon className="h-5 w-5" />
-                  <span className="font-medium">{item.label}</span>
-                </NavLink>
-              );
-            })}
+          <div className="flex flex-col h-[calc(100vh-120px)]">
+            <div className="space-y-2">
+              {navItems.map((item) => {
+                if (item.href === 'logout') {
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      key="logout"
+                      onClick={handleLogout}
+                      className="flex items-center gap-3 px-4 py-3 w-full rounded-lg text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
+                    >
+                      <Icon className="h-5 w-5" />
+                      <span className="font-medium">Logout</span>
+                    </button>
+                  );
+                }
+
+                const Icon = item.icon;
+                return (
+                  <NavLink
+                    key={item.href}
+                    to={item.href}
+                    className={cn(
+                      "flex items-center gap-3 px-4 py-3 rounded-lg transition-all duration-200",
+                      isActive(item.href)
+                        ? "bg-primary text-primary-foreground shadow-md"
+                        : "hover:bg-muted"
+                    )}
+                  >
+                    <Icon className="h-5 w-5" />
+                    <span className="font-medium">{item.label}</span>
+                  </NavLink>
+                );
+              })}
+            </div>
+
+            <div className="mt-auto pt-6">
+              <button
+                onClick={handleLogout}
+                className="flex items-center gap-3 px-4 py-3 w-full rounded-lg text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20"
+              >
+                <LogOut className="h-5 w-5" />
+                <span className="font-medium">Logout</span>
+              </button>
+            </div>
           </div>
         </div>
       </nav>

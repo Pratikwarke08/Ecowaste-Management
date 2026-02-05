@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import Navigation from '@/components/layout/Navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -9,8 +9,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Textarea } from '@/components/ui/textarea';
 import { useToast } from '@/hooks/use-toast';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { 
-  Settings as SettingsIcon, 
+import {
+  Settings as SettingsIcon,
   User,
   Bell,
   Shield,
@@ -129,6 +129,36 @@ const Settings = () => {
   const [isProfileSaving, setIsProfileSaving] = useState(false);
 
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
+
+  const [activeTab, setActiveTab] = useState('profile');
+  const tabsContainerRef = useRef<HTMLDivElement | null>(null);
+
+  // Smooth scroll to center active tab
+  useEffect(() => {
+    const container = tabsContainerRef.current;
+    if (!container) return;
+
+    const activeButton = container.querySelector(`[data-state="active"]`) as HTMLElement;
+    if (!activeButton) return;
+
+    const scrollToCenter = () => {
+      const containerRect = container.getBoundingClientRect();
+      const buttonRect = activeButton.getBoundingClientRect();
+
+      const scrollLeft = activeButton.offsetLeft - (containerRect.width / 2) + (buttonRect.width / 2);
+
+      container.scrollTo({
+        left: scrollLeft,
+        behavior: 'smooth'
+      });
+    };
+
+    // Scroll immediately and after a short delay for reliability
+    requestAnimationFrame(scrollToCenter);
+    const timeout = setTimeout(scrollToCenter, 100);
+
+    return () => clearTimeout(timeout);
+  }, [activeTab]);
 
   const applyUserToState = useCallback((userData?: UserProfilePayload | null) => {
     if (!userData) return;
@@ -255,6 +285,7 @@ const Settings = () => {
   const [privacy, setPrivacy] = useState<PrivacySettings>(DEFAULT_PRIVACY_STATE);
 
   const [preferences, setPreferences] = useState<PreferencesSettings>(DEFAULT_PREFERENCES_STATE);
+
 
   const handleSaveNotifications = async () => {
     try {
@@ -391,7 +422,7 @@ const Settings = () => {
   return (
     <div className="min-h-screen bg-background">
       <Navigation userRole={userType} />
-      <main className="lg:ml-64 p-6">
+      <main className="lg:ml-64 p-4 sm:p-6">
         <div className="max-w-4xl mx-auto space-y-6">
           {/* Header */}
           <div className="bg-gradient-eco rounded-lg p-6 text-white">
@@ -399,14 +430,73 @@ const Settings = () => {
             <p className="text-white/90">Manage your profile, notifications, and app preferences</p>
           </div>
 
-          <Tabs defaultValue="profile" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-5">
-              <TabsTrigger value="profile">Profile</TabsTrigger>
-              <TabsTrigger value="notifications">Notifications</TabsTrigger>
-              <TabsTrigger value="privacy">Privacy</TabsTrigger>
-              <TabsTrigger value="preferences">Preferences</TabsTrigger>
-              <TabsTrigger value="support">Support</TabsTrigger>
-            </TabsList>
+          <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
+            {/* Carousel-style TabsList */}
+            <div className="relative w-full overflow-hidden">
+              <div
+                ref={tabsContainerRef}
+                className="overflow-x-auto overflow-y-hidden pb-2"
+                style={{
+                  scrollSnapType: 'x mandatory',
+                  WebkitOverflowScrolling: 'touch',
+                  scrollbarWidth: 'none',
+                  msOverflowStyle: 'none'
+                }}
+              >
+                <TabsList className="inline-flex items-center gap-2 w-auto min-w-full justify-start bg-muted rounded-lg p-1">
+                  <TabsTrigger
+                    value="profile"
+                    className="flex items-center gap-2 flex-shrink-0 snap-center whitespace-nowrap px-4 py-2"
+                  >
+                    <User className="h-4 w-4" />
+                    <span>Profile</span>
+                  </TabsTrigger>
+
+                  <TabsTrigger
+                    value="notifications"
+                    className="flex items-center gap-2 flex-shrink-0 snap-center whitespace-nowrap px-4 py-2"
+                  >
+                    <Bell className="h-4 w-4" />
+                    <span>Notifications</span>
+                  </TabsTrigger>
+
+                  <TabsTrigger
+                    value="privacy"
+                    className="flex items-center gap-2 flex-shrink-0 snap-center whitespace-nowrap px-4 py-2"
+                  >
+                    <Shield className="h-4 w-4" />
+                    <span>Privacy</span>
+                  </TabsTrigger>
+
+                  <TabsTrigger
+                    value="preferences"
+                    className="flex items-center gap-2 flex-shrink-0 snap-center whitespace-nowrap px-4 py-2"
+                  >
+                    <SettingsIcon className="h-4 w-4" />
+                    <span>Preferences</span>
+                  </TabsTrigger>
+
+                  <TabsTrigger
+                    value="support"
+                    className="flex items-center gap-2 flex-shrink-0 snap-center whitespace-nowrap px-4 py-2"
+                  >
+                    <HelpCircle className="h-4 w-4" />
+                    <span>Support</span>
+                  </TabsTrigger>
+                </TabsList>
+              </div>
+
+              {/* Gradient fade indicators */}
+              <div className="absolute left-0 top-0 bottom-0 w-8 bg-gradient-to-r from-background to-transparent pointer-events-none" />
+              <div className="absolute right-0 top-0 bottom-0 w-8 bg-gradient-to-l from-background to-transparent pointer-events-none" />
+            </div>
+
+            {/* Add CSS to hide scrollbar */}
+            <style>{`
+              .overflow-x-auto::-webkit-scrollbar {
+                display: none;
+              }
+            `}</style>
 
             {/* Profile Tab */}
             <TabsContent value="profile" className="space-y-6">
@@ -499,7 +589,7 @@ const Settings = () => {
                       <Input
                         id="name"
                         value={profile.name}
-                        onChange={(e) => setProfile({...profile, name: e.target.value})}
+                        onChange={(e) => setProfile({ ...profile, name: e.target.value })}
                       />
                     </div>
 
@@ -519,7 +609,7 @@ const Settings = () => {
                       <Input
                         id="phone"
                         value={profile.phone}
-                        onChange={(e) => setProfile({...profile, phone: e.target.value})}
+                        onChange={(e) => setProfile({ ...profile, phone: e.target.value })}
                       />
                     </div>
 
@@ -531,7 +621,7 @@ const Settings = () => {
                         maxLength={4}
                         placeholder="1234"
                         onChange={(e) => {
-                          const digits = e.target.value.replace(/\\D/g, '').slice(0, 4);
+                          const digits = e.target.value.replace(/\D/g, '').slice(0, 4);
                           setProfile({ ...profile, aadhaar: digits });
                         }}
                       />
@@ -542,7 +632,7 @@ const Settings = () => {
                       <Input
                         id="address"
                         value={profile.address}
-                        onChange={(e) => setProfile({...profile, address: e.target.value})}
+                        onChange={(e) => setProfile({ ...profile, address: e.target.value })}
                       />
                     </div>
 
@@ -561,16 +651,16 @@ const Settings = () => {
                       <Textarea
                         id="bio"
                         value={profile.bio}
-                        onChange={(e) => setProfile({...profile, bio: e.target.value})}
+                        onChange={(e) => setProfile({ ...profile, bio: e.target.value })}
                         placeholder="Tell us about yourself..."
                         rows={3}
                       />
                     </div>
                   </div>
 
-                  <Button onClick={handleSaveProfile} variant="eco">
+                  <Button onClick={handleSaveProfile} disabled={isProfileSaving} variant="eco">
                     <Save className="mr-2 h-4 w-4" />
-                    Save Profile
+                    {isProfileSaving ? 'Saving...' : 'Save Profile'}
                   </Button>
                 </CardContent>
               </Card>
@@ -602,8 +692,8 @@ const Settings = () => {
                       </div>
                       <Switch
                         checked={notifications.emailNotifications}
-                        onCheckedChange={(checked) => 
-                          setNotifications({...notifications, emailNotifications: checked})
+                        onCheckedChange={(checked) =>
+                          setNotifications({ ...notifications, emailNotifications: checked })
                         }
                       />
                     </div>
@@ -620,8 +710,8 @@ const Settings = () => {
                       </div>
                       <Switch
                         checked={notifications.pushNotifications}
-                        onCheckedChange={(checked) => 
-                          setNotifications({...notifications, pushNotifications: checked})
+                        onCheckedChange={(checked) =>
+                          setNotifications({ ...notifications, pushNotifications: checked })
                         }
                       />
                     </div>
@@ -635,8 +725,8 @@ const Settings = () => {
                       </div>
                       <Switch
                         checked={notifications.smsAlerts}
-                        onCheckedChange={(checked) => 
-                          setNotifications({...notifications, smsAlerts: checked})
+                        onCheckedChange={(checked) =>
+                          setNotifications({ ...notifications, smsAlerts: checked })
                         }
                       />
                     </div>
@@ -650,8 +740,8 @@ const Settings = () => {
                       </div>
                       <Switch
                         checked={notifications.weeklyReports}
-                        onCheckedChange={(checked) => 
-                          setNotifications({...notifications, weeklyReports: checked})
+                        onCheckedChange={(checked) =>
+                          setNotifications({ ...notifications, weeklyReports: checked })
                         }
                       />
                     </div>
@@ -665,8 +755,8 @@ const Settings = () => {
                       </div>
                       <Switch
                         checked={notifications.achievementAlerts}
-                        onCheckedChange={(checked) => 
-                          setNotifications({...notifications, achievementAlerts: checked})
+                        onCheckedChange={(checked) =>
+                          setNotifications({ ...notifications, achievementAlerts: checked })
                         }
                       />
                     </div>
@@ -681,8 +771,8 @@ const Settings = () => {
                         </div>
                         <Switch
                           checked={notifications.maintenanceUpdates}
-                          onCheckedChange={(checked) => 
-                            setNotifications({...notifications, maintenanceUpdates: checked})
+                          onCheckedChange={(checked) =>
+                            setNotifications({ ...notifications, maintenanceUpdates: checked })
                           }
                         />
                       </div>
@@ -713,9 +803,9 @@ const Settings = () => {
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <Label>Profile Visibility</Label>
-                      <Select 
-                        value={privacy.profileVisibility} 
-                        onValueChange={(value: "community" | "public" | "private") => setPrivacy({...privacy, profileVisibility: value})}
+                      <Select
+                        value={privacy.profileVisibility}
+                        onValueChange={(value: "community" | "public" | "private") => setPrivacy({ ...privacy, profileVisibility: value })}
                       >
                         <SelectTrigger>
                           <Eye className="mr-2 h-4 w-4" />
@@ -744,8 +834,8 @@ const Settings = () => {
                       </div>
                       <Switch
                         checked={privacy.locationSharing}
-                        onCheckedChange={(checked) => 
-                          setPrivacy({...privacy, locationSharing: checked})
+                        onCheckedChange={(checked) =>
+                          setPrivacy({ ...privacy, locationSharing: checked })
                         }
                       />
                     </div>
@@ -759,8 +849,8 @@ const Settings = () => {
                       </div>
                       <Switch
                         checked={privacy.activityTracking}
-                        onCheckedChange={(checked) => 
-                          setPrivacy({...privacy, activityTracking: checked})
+                        onCheckedChange={(checked) =>
+                          setPrivacy({ ...privacy, activityTracking: checked })
                         }
                       />
                     </div>
@@ -774,8 +864,8 @@ const Settings = () => {
                       </div>
                       <Switch
                         checked={privacy.dataAnalytics}
-                        onCheckedChange={(checked) => 
-                          setPrivacy({...privacy, dataAnalytics: checked})
+                        onCheckedChange={(checked) =>
+                          setPrivacy({ ...privacy, dataAnalytics: checked })
                         }
                       />
                     </div>
@@ -817,9 +907,9 @@ const Settings = () => {
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                     <div className="space-y-2">
                       <Label>Language</Label>
-                      <Select 
-                        value={preferences.language} 
-                        onValueChange={(value) => setPreferences({...preferences, language: value})}
+                      <Select
+                        value={preferences.language}
+                        onValueChange={(value) => setPreferences({ ...preferences, language: value })}
                       >
                         <SelectTrigger>
                           <Globe className="mr-2 h-4 w-4" />
@@ -836,10 +926,10 @@ const Settings = () => {
 
                     <div className="space-y-2">
                       <Label>Theme</Label>
-                      <Select 
-                        value={preferences.theme} 
+                      <Select
+                        value={preferences.theme}
                         onValueChange={(value) => {
-                          setPreferences({...preferences, theme: value});
+                          setPreferences({ ...preferences, theme: value });
                           // Apply immediately when user changes theme
                           applyTheme(value);
                         }}
@@ -857,9 +947,9 @@ const Settings = () => {
 
                     <div className="space-y-2">
                       <Label>Currency</Label>
-                      <Select 
-                        value={preferences.currency} 
-                        onValueChange={(value) => setPreferences({...preferences, currency: value})}
+                      <Select
+                        value={preferences.currency}
+                        onValueChange={(value) => setPreferences({ ...preferences, currency: value })}
                       >
                         <SelectTrigger>
                           <SelectValue />
@@ -874,9 +964,9 @@ const Settings = () => {
 
                     <div className="space-y-2">
                       <Label>Timezone</Label>
-                      <Select 
-                        value={preferences.timezone} 
-                        onValueChange={(value) => setPreferences({...preferences, timezone: value})}
+                      <Select
+                        value={preferences.timezone}
+                        onValueChange={(value) => setPreferences({ ...preferences, timezone: value })}
                       >
                         <SelectTrigger>
                           <SelectValue />
@@ -916,17 +1006,17 @@ const Settings = () => {
                       <HelpCircle className="h-5 w-5 mb-1" />
                       <span>FAQ & Help Center</span>
                     </Button>
-                    
+
                     <Button variant="outline" className="h-16 flex-col">
                       <Mail className="h-5 w-5 mb-1" />
                       <span>Contact Support</span>
                     </Button>
-                    
+
                     <Button variant="outline" className="h-16 flex-col">
                       <Globe className="h-5 w-5 mb-1" />
                       <span>Community Guidelines</span>
                     </Button>
-                    
+
                     <Button variant="outline" className="h-16 flex-col">
                       <Shield className="h-5 w-5 mb-1" />
                       <span>Privacy Policy</span>
@@ -956,6 +1046,23 @@ const Settings = () => {
               </Card>
             </TabsContent>
           </Tabs>
+        </div>
+        {/* Global Logout Button */}
+        <div className="max-w-4xl mx-auto mt-6">
+          <Card>
+            <CardContent className="p-6 flex justify-between items-center">
+              <div>
+                <h3 className="font-medium">Logout</h3>
+                <p className="text-sm text-muted-foreground">
+                  Sign out of your account from this device
+                </p>
+              </div>
+              <Button onClick={handleLogout} variant="destructive">
+                <LogOut className="mr-2 h-4 w-4" />
+                Logout
+              </Button>
+            </CardContent>
+          </Card>
         </div>
       </main>
     </div>

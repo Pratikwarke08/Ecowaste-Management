@@ -335,13 +335,7 @@ const Capture = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="">
             <div className="flex items-center gap-3">
-              <div className="bg-gradient-to-r from-green-600 to-blue-600 p-2 rounded-lg">
-                <Recycle className="h-6 w-6 text-white" />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold text-foreground">EcoCollect</h1>
-                <p className="text-sm text-muted-foreground">Smart Waste Management</p>
-              </div>
+
             </div>
             <Button
               variant="outline"

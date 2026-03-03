@@ -121,6 +121,25 @@ function LocateOnLoad({ userLocation }: { userLocation: { lat: number; lng: numb
   return null;
 }
 
+function LocateMe({ trigger }: { trigger: number }) {
+  const map = useMap();
+  const prevTrigger = useRef(0);
+
+  useEffect(() => {
+    if (trigger === 0 || trigger === prevTrigger.current) return;
+    prevTrigger.current = trigger;
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        map.flyTo([pos.coords.latitude, pos.coords.longitude], 17, { animate: true, duration: 1.5 });
+      },
+      undefined,
+      { enableHighAccuracy: true, timeout: 10000 }
+    );
+  }, [trigger, map]);
+
+  return null;
+}
+
 function FlyToTarget({ target }: { target: { lat: number; lng: number; zoom?: number } | null }) {
   const map = useMap();
   const prevKey = useRef<string | null>(null);
@@ -183,6 +202,7 @@ interface Props {
   onMapClick?: (lat: number, lng: number) => void;
   deploymentMode?: boolean;
   userRole?: 'collector' | 'employee' | null;
+  locateTrigger?: number;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -196,6 +216,7 @@ export default function UnifiedMap({
   onMapClick,
   deploymentMode,
   userRole,
+  locateTrigger,
 }: Props) {
   const [selectedDustbin, setSelectedDustbin] = useState<Dustbin | null>(null);
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
@@ -412,8 +433,10 @@ export default function UnifiedMap({
 
           <AdaptiveZoom />
           <LocateOnLoad userLocation={userLocation} />
+
           <FlyToTarget target={flyTarget} />
           <MapClickHandler onMapClick={onMapClick} deploymentMode={deploymentMode} />
+          <LocateMe trigger={locateTrigger ?? 0} />
 
           {/* User dot */}
           {userLocation && (
@@ -502,7 +525,7 @@ export default function UnifiedMap({
         {deploymentMode && (
           <div
             style={{
-              position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
+              position: 'absolute', top: 60, left: '50%', transform: 'translateX(-50%)',
               zIndex: 1000, pointerEvents: 'none',
               background: 'rgba(0,0,0,.82)', color: '#fff',
               padding: '8px 20px', borderRadius: 24, fontSize: 13, fontWeight: 500,

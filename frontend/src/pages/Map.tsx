@@ -153,6 +153,7 @@ export default function MapPage() {
             onMapClick={handleMapClick}
             deploymentMode={deploymentMode}
             userRole={userRole}
+            locateTrigger={locateTrigger}
           />
         )}
 
@@ -192,17 +193,19 @@ export default function MapPage() {
         </button>
 
         {/* ── Deployment FAB ── */}
-        <div style={{ position: 'absolute', bottom: 24, right: 16, zIndex: 1000 }}>
-          <Button
-            size="lg"
-            variant={deploymentMode ? 'destructive' : 'default'}
-            className={`rounded-full shadow-lg h-14 w-14 p-0 ${deploymentMode ? 'animate-pulse' : ''}`}
-            onClick={() => setDeploymentMode(m => !m)}
-            title={deploymentMode ? 'Cancel placement' : 'Add dustbin'}
-          >
-            <Plus className={`h-6 w-6 transition-transform duration-200 ${deploymentMode ? 'rotate-45' : ''}`} />
-          </Button>
-        </div>
+        {userRole === 'employee' && (
+          <div style={{ position: 'absolute', bottom: 24, right: 16, zIndex: 1000 }}>
+            <Button
+              size="lg"
+              variant={deploymentMode ? 'destructive' : 'default'}
+              className={`rounded-full shadow-lg h-14 w-14 p-0 ${deploymentMode ? 'animate-pulse' : ''}`}
+              onClick={() => setDeploymentMode(m => !m)}
+              title={deploymentMode ? 'Cancel placement' : 'Add dustbin'}
+            >
+              <Plus className={`h-6 w-6 transition-transform duration-200 ${deploymentMode ? 'rotate-45' : ''}`} />
+            </Button>
+          </div>
+        )}
       </div>
     </div>
   );

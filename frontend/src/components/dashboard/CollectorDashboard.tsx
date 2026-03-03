@@ -234,11 +234,11 @@ const CollectorDashboard = () => {
                 {recentIncidents.map((inc) => (
                   <div key={inc._id} className="flex items-center justify-between p-3 rounded-lg border">
                     <div className="min-w-0">
-                      <p className="font-medium text-sm capitalize truncate">{inc.category.replace(/_/g,' ')}</p>
+                      <p className="font-medium text-sm capitalize truncate">{inc.category.replace(/_/g, ' ')}</p>
                       <p className="text-xs text-muted-foreground truncate">{inc.description || 'No description'}</p>
                       <p className="text-xs text-muted-foreground">{new Date(inc.updatedAt).toLocaleString()} • {inc.coordinates.lat.toFixed(4)}, {inc.coordinates.lng.toFixed(4)}</p>
                     </div>
-                    <Badge className="capitalize ml-3">{inc.status.replace(/_/g,' ')}</Badge>
+                    <Badge className="capitalize ml-3">{inc.status.replace(/_/g, ' ')}</Badge>
                   </div>
                 ))}
               </div>
@@ -290,7 +290,7 @@ const CollectorDashboard = () => {
             <Button
               className="w-full justify-start h-12"
               variant="ocean"
-              onClick={() => navigate('/dustbins')}
+              onClick={() => navigate('/map')}
             >
               <MapPin className="mr-3 h-5 w-5" />
               Find Nearby Dustbins

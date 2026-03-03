@@ -1,128 +1,146 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Navigation from '@/components/layout/Navigation';
 import UnifiedMap from '@/components/map/UnifiedMap';
 import { apiFetch } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Plus, Loader2, Filter } from 'lucide-react';
+import { Plus, Loader2, Filter, LocateFixed } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { Dustbin } from '@/components/map/DustbinMap';
 import { Incident } from '@/components/map/IncidentMap';
-import { getReliableLocation } from '@/lib/location';
+
+// ─── High-precision location (Google Maps style) ──────────────────────────────
+// 1. Fire a fast low-accuracy fix immediately so the map can centre.
+// 2. Then get a high-accuracy fix and update.
+function getHighPrecisionLocation(): Promise<{ lat: number; lng: number }> {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('Geolocation not supported'));
+      return;
+    }
+
+    let settled = false;
+
+    // Stage 1 – quick fix (low accuracy, < 1 s usually)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        if (!settled) {
+          settled = true;
+          resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        }
+      },
+      () => { /* ignore, wait for stage 2 */ },
+      { enableHighAccuracy: false, timeout: 4000, maximumAge: 30000 }
+    );
+
+    // Stage 2 – precise fix (GPS, ~5–15 s on mobile)
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        // Always update with the better fix
+        resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+        settled = true;
+      },
+      (err) => {
+        if (!settled) reject(err);
+      },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  });
+}
 
 export default function MapPage() {
   const navigate = useNavigate();
   const { toast } = useToast();
+
   const [dustbins, setDustbins] = useState<Dustbin[]>([]);
   const [incidents, setIncidents] = useState<Incident[]>([]);
   const [loading, setLoading] = useState(true);
   const [userLocation, setUserLocation] = useState<{ lat: number; lng: number } | null>(null);
+  const [locating, setLocating] = useState(false);
   const [deploymentMode, setDeploymentMode] = useState(false);
   const [userRole, setUserRole] = useState<'collector' | 'employee' | null>(null);
   const [mapFilter, setMapFilter] = useState<'all' | 'dustbins' | 'incidents'>('all');
 
-  const [selectedDustbin, setSelectedDustbin] = useState<Dustbin | null>(null);
-  const [currentDustbinImage, setCurrentDustbinImage] = useState<string | null>(null);
-  const [imageLoading, setImageLoading] = useState(false);
+  // Trigger re-locate from button
+  const [locateTrigger, setLocateTrigger] = useState(0);
 
   useEffect(() => {
-    // Get user role from local storage or context
     const storedRole = localStorage.getItem('userType') as 'collector' | 'employee' | null;
-
-    // Redirect collectors to dashboard
-    if (storedRole === 'collector') {
-      navigate('/dashboard');
-      return;
-    }
-
     setUserRole(storedRole);
 
     const loadData = async () => {
       try {
         setLoading(true);
-        const [binsRes, incidentsRes] = await Promise.all([
+
+        // Fetch map data + location in parallel
+        const [binsRes, incsRes] = await Promise.all([
           apiFetch('/dustbins'),
-          apiFetch('/incidents')
+          apiFetch('/incidents'),
         ]);
 
         if (binsRes.ok) {
-          const bins = await binsRes.json();
-          setDustbins(Array.isArray(bins) ? bins : []);
+          const data = await binsRes.json();
+          setDustbins(Array.isArray(data) ? data : []);
         }
-
-        if (incidentsRes.ok) {
-          const incs = await incidentsRes.json();
-          setIncidents(Array.isArray(incs) ? incs : []);
+        if (incsRes.ok) {
+          const data = await incsRes.json();
+          setIncidents(Array.isArray(data) ? data : []);
         }
-
-        // Get user location
-        try {
-          const loc = await getReliableLocation();
-          setUserLocation(loc);
-        } catch (e) {
-          console.warn("Could not get user location", e);
-        }
-
       } catch (err) {
-        console.error("Failed to load map data", err);
-        toast({
-          title: "Error",
-          description: "Failed to load map data",
-          variant: "destructive",
-        });
+        console.error('Failed to load map data', err);
+        toast({ title: 'Error', description: 'Failed to load map data', variant: 'destructive' });
       } finally {
         setLoading(false);
       }
     };
 
     loadData();
-  }, [toast]);
+    locateUser(); // kick off location on mount
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Re-locate when triggered by button
+  useEffect(() => {
+    if (locateTrigger === 0) return;
+    locateUser();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locateTrigger]);
+
+  const locateUser = async () => {
+    setLocating(true);
+    try {
+      const loc = await getHighPrecisionLocation();
+      setUserLocation(loc);
+    } catch (e) {
+      toast({ title: 'Location unavailable', description: 'Please enable location permissions.', variant: 'destructive' });
+    } finally {
+      setLocating(false);
+    }
+  };
 
   const handleMapClick = (lat: number, lng: number) => {
-    if (deploymentMode) {
-      // Navigate to Add Dustbin page with coordinates
-      navigate(`/add-dustbin?lat=${lat}&lng=${lng}`);
-    }
+    if (deploymentMode) navigate(`/add-dustbin?lat=${lat}&lng=${lng}`);
   };
 
-  const handleDustbinSelect = async (bin: Dustbin | null) => {
-    if (!bin || deploymentMode) return;
-
-    setSelectedDustbin(bin);
-    setCurrentDustbinImage(null);
-
-    try {
-      setImageLoading(true);
-
-      const res = await apiFetch(
-        `/reports/latest-disposal-image?dustbinId=${bin._id}`
-      );
-
-      if (res.ok) {
-        const data = await res.json();
-        if (data?.disposalImageBase64) {
-          setCurrentDustbinImage(data.disposalImageBase64);
-          return;
-        }
-      }
-
-      // Fallback to initial deployment image
-      setCurrentDustbinImage((bin as any)?.photoBase64 || null);
-
-    } catch (e) {
-      console.error("Failed to load dustbin image", e);
-      setCurrentDustbinImage((bin as any)?.photoBase64 || null);
-    } finally {
-      setImageLoading(false);
-    }
-  };
+  const filteredDustbins = mapFilter === 'incidents' ? [] : dustbins;
+  const filteredIncidents = mapFilter === 'dustbins' ? [] : incidents;
 
   return (
-    <div className="min-h-screen bg-background pb-20 lg:pb-0 lg:pl-64">
+    // Outer wrapper — fills viewport minus nav, no overflow
+    <div
+      style={{
+        display: 'flex',
+        flexDirection: 'column',
+        height: '100vh',
+        overflow: 'hidden',
+      }}
+      className="bg-background lg:pl-64"
+    >
       <Navigation userRole={userRole || 'collector'} />
 
-      <div className="h-[calc(100vh-80px)] lg:h-screen w-full relative">
+      {/* Map area — fills remaining height exactly */}
+      <div style={{ flex: 1, position: 'relative', overflow: 'hidden', minHeight: 0 }}>
         {loading ? (
           <div className="flex items-center justify-center h-full">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -130,20 +148,19 @@ export default function MapPage() {
         ) : (
           <UnifiedMap
             userLocation={userLocation}
-            dustbins={mapFilter === 'incidents' ? [] : dustbins}
-            incidents={mapFilter === 'dustbins' ? [] : incidents}
+            dustbins={filteredDustbins}
+            incidents={filteredIncidents}
             onMapClick={handleMapClick}
-            onDustbinSelect={handleDustbinSelect}
             deploymentMode={deploymentMode}
             userRole={userRole}
           />
         )}
 
-        {/* Filter Controls */}
-        <div className="absolute top-4 right-4 z-[1000] w-40">
+        {/* ── Filter ── */}
+        <div style={{ position: 'absolute', top: 12, right: 12, zIndex: 1000, width: 160 }}>
           <Select value={mapFilter} onValueChange={(v: any) => setMapFilter(v)}>
-            <SelectTrigger className="w-full bg-background/95 backdrop-blur shadow-md">
-              <Filter className="w-4 h-4 mr-2" />
+            <SelectTrigger className="w-full bg-white/95 backdrop-blur shadow-md border-0 rounded-xl">
+              <Filter className="w-4 h-4 mr-2 text-gray-600" />
               <SelectValue placeholder="Filter Map" />
             </SelectTrigger>
             <SelectContent>
@@ -154,21 +171,37 @@ export default function MapPage() {
           </Select>
         </div>
 
-        {/* Floating Action Button for Deployment Mode */}
-        <div className="absolute bottom-6 right-6 z-[1000] flex flex-col gap-4">
+        {/* ── Locate me button (Google Maps style) ── */}
+        <button
+          onClick={() => setLocateTrigger(t => t + 1)}
+          disabled={locating}
+          style={{
+            position: 'absolute', bottom: 88, right: 16, zIndex: 1000,
+            width: 44, height: 44, borderRadius: '50%',
+            background: '#fff', border: 'none', cursor: 'pointer',
+            boxShadow: '0 2px 12px rgba(0,0,0,.22)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center',
+            transition: 'box-shadow .2s',
+          }}
+          title="Locate me"
+        >
+          {locating
+            ? <Loader2 className="h-5 w-5 animate-spin text-blue-500" />
+            : <LocateFixed className="h-5 w-5 text-blue-600" />
+          }
+        </button>
+
+        {/* ── Deployment FAB ── */}
+        <div style={{ position: 'absolute', bottom: 24, right: 16, zIndex: 1000 }}>
           <Button
             size="lg"
-            variant={deploymentMode ? "destructive" : "default"}
+            variant={deploymentMode ? 'destructive' : 'default'}
             className={`rounded-full shadow-lg h-14 w-14 p-0 ${deploymentMode ? 'animate-pulse' : ''}`}
-            onClick={() => setDeploymentMode(!deploymentMode)}
+            onClick={() => setDeploymentMode(m => !m)}
+            title={deploymentMode ? 'Cancel placement' : 'Add dustbin'}
           >
-            <Plus className={`h-6 w-6 transition-transform ${deploymentMode ? 'rotate-45' : ''}`} />
+            <Plus className={`h-6 w-6 transition-transform duration-200 ${deploymentMode ? 'rotate-45' : ''}`} />
           </Button>
-          {deploymentMode && (
-            <div className="absolute right-16 bottom-2 bg-black/80 text-white text-xs px-2 py-1 rounded whitespace-nowrap">
-              {deploymentMode ? "Cancel Placement" : "Add Dustbin"}
-            </div>
-          )}
         </div>
       </div>
     </div>

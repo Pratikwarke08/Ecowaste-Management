@@ -1,41 +1,178 @@
-import { useEffect, useRef, useState } from 'react';
-import { MapContainer, TileLayer, Marker, Popup, useMap, useMapEvents } from 'react-leaflet';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import {
+  MapContainer, TileLayer, Marker, Popup,
+  useMap, useMapEvents, Polyline, CircleMarker
+} from 'react-leaflet';
 import 'leaflet/dist/leaflet.css';
 import L, { LatLngExpression } from 'leaflet';
 import { Dustbin } from './DustbinMap';
 import { Incident } from './IncidentMap';
 import FullscreenMap from './FullscreenMap';
+import { Loader2, Navigation, X } from 'lucide-react';
 
-// Icons
-const DustbinIcon = (status: Dustbin['status'] | undefined, selected: boolean, urgent?: boolean) => {
-  let baseColor = '#16a34a'; // active
-  if (status === 'maintenance') baseColor = '#f59e0b';
-  if (status === 'full') baseColor = '#dc2626';
-  if (status === 'inactive') baseColor = '#6b7280';
-  if (urgent) baseColor = '#b91c1c';
+// ─── Icons ────────────────────────────────────────────────────────────────────
 
-  const size = selected ? 36 : 28;
+const makeDustbinIcon = (
+  status: Dustbin['status'] | undefined,
+  selected: boolean,
+  urgent?: boolean
+) => {
+  let bg = '#16a34a';
+  if (status === 'maintenance') bg = '#f59e0b';
+  if (status === 'full') bg = '#dc2626';
+  if (status === 'inactive') bg = '#6b7280';
+  if (urgent) bg = '#b91c1c';
+  const size = selected ? 40 : 30;
+  const ring = selected ? `box-shadow:0 0 0 3px white,0 0 0 5px ${bg};` : '';
   return L.divIcon({
-    className: 'dustbin-icon',
-    html: `<div style="display:flex;align-items:center;justify-content:center;width:${size}px;height:${size}px;border-radius:8px;background:${baseColor};color:white;font-weight:bold;box-shadow:0 6px 18px rgba(0,0,0,.2)">🗑️</div>`,
-    iconSize: [size, size]
+    className: '',
+    html: `<div style="display:flex;align-items:center;justify-content:center;width:${size}px;height:${size}px;border-radius:10px;background:${bg};color:white;font-size:${selected ? 20 : 16}px;${ring}transition:all .2s">🗑️</div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
   });
 };
 
-const IncidentIcon = (selected: boolean, urgency?: string) => {
-  const isCritical = urgency === 'critical' || urgency === 'high';
+const makeIncidentIcon = (selected: boolean, urgency?: string) => {
+  const critical = urgency === 'critical' || urgency === 'high';
+  const bg = critical ? '#ef4444' : '#f59e0b';
+  const size = selected ? 40 : 30;
+  const ring = selected ? `box-shadow:0 0 0 3px white,0 0 0 5px ${bg};` : '';
   return L.divIcon({
-    className: 'incident-icon',
-    html: `<div style="display:flex;align-items:center;justify-content:center;width:${selected ? 36 : 28}px;height:${selected ? 36 : 28}px;border-radius:9999px;background:${isCritical ? '#ef4444' : '#f59e0b'};color:white;font-weight:bold;box-shadow:0 6px 18px rgba(0,0,0,.2)">⚠️</div>`,
-    iconSize: [selected ? 36 : 28, selected ? 36 : 28]
+    className: '',
+    html: `<div style="display:flex;align-items:center;justify-content:center;width:${size}px;height:${size}px;border-radius:50%;background:${bg};color:white;font-size:${selected ? 20 : 16}px;${ring}transition:all .2s">⚠️</div>`,
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
   });
 };
 
-const UserIcon = L.divIcon({
-  className: 'user-icon',
-  html: `<div style="display:flex;align-items:center;justify-content:center;width:24px;height:24px;border-radius:9999px;background:#2563eb;color:white;box-shadow:0 4px 12px rgba(0,0,0,.2)">•</div>`,
-  iconSize: [24, 24]
-});
+const makeUserIcon = () =>
+  L.divIcon({
+    className: '',
+    html: `
+      <div style="position:relative;width:22px;height:22px;">
+        <div style="position:absolute;inset:0;border-radius:50%;background:#4285f4;border:2.5px solid white;box-shadow:0 2px 8px rgba(66,133,244,.5);z-index:2;"></div>
+        <div style="position:absolute;inset:-8px;border-radius:50%;background:rgba(66,133,244,.18);animation:gm-pulse 2s ease-out infinite;z-index:1;"></div>
+      </div>
+      <style>
+        @keyframes gm-pulse {
+          0%   { transform:scale(0.5); opacity:1; }
+          100% { transform:scale(2);   opacity:0; }
+        }
+      </style>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+  });
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function haversine(
+  a: { lat: number; lng: number },
+  b: { lat: number; lng: number }
+): number {
+  const R = 6371e3;
+  const toRad = (x: number) => (x * Math.PI) / 180;
+  const dLat = toRad(b.lat - a.lat);
+  const dLng = toRad(b.lng - a.lng);
+  const sinA =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(sinA), Math.sqrt(1 - sinA));
+}
+
+function formatDist(m: number): string {
+  return m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(2)} km`;
+}
+
+function formatTime(s: number): string {
+  const m = Math.round(s / 60);
+  return m < 60 ? `${m} min` : `${Math.floor(m / 60)}h ${m % 60}m`;
+}
+
+async function fetchOSRMRoute(
+  from: { lat: number; lng: number },
+  to: { lat: number; lng: number }
+): Promise<{ path: LatLngExpression[]; distanceM: number; durationS: number } | null> {
+  try {
+    const url = `https://router.project-osrm.org/route/v1/foot/${from.lng},${from.lat};${to.lng},${to.lat}?overview=full&geometries=geojson`;
+    const res = await fetch(url);
+    const data = await res.json();
+    const coords = data?.routes?.[0]?.geometry?.coordinates as [number, number][] | undefined;
+    if (!coords?.length) return null;
+    return {
+      path: coords.map(([lng, lat]) => [lat, lng] as LatLngExpression),
+      distanceM: Number(data.routes[0].distance),
+      durationS: Number(data.routes[0].duration),
+    };
+  } catch {
+    return null;
+  }
+}
+
+// ─── Inner map components ─────────────────────────────────────────────────────
+
+function LocateOnLoad({ userLocation }: { userLocation: { lat: number; lng: number } | null }) {
+  const map = useMap();
+  const doneRef = useRef(false);
+  useEffect(() => {
+    if (!userLocation || doneRef.current) return;
+    doneRef.current = true;
+    map.flyTo([userLocation.lat, userLocation.lng], 17, { animate: true, duration: 1.5 });
+  }, [userLocation, map]);
+  return null;
+}
+
+function FlyToTarget({ target }: { target: { lat: number; lng: number; zoom?: number } | null }) {
+  const map = useMap();
+  const prevKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (!target) return;
+    const key = `${target.lat},${target.lng}`;
+    if (key === prevKey.current) return;
+    prevKey.current = key;
+    map.flyTo([target.lat, target.lng], target.zoom ?? 18, { animate: true, duration: 1.2 });
+  }, [target, map]);
+  return null;
+}
+
+function AdaptiveZoom() {
+  const map = useMap();
+  const lastRef = useRef<number | null>(null);
+  useEffect(() => {
+    const el = map.getContainer();
+    const handler = (e: WheelEvent) => {
+      e.preventDefault();
+      const now = performance.now();
+      const dt = lastRef.current ? now - lastRef.current : 100;
+      lastRef.current = now;
+      const dir = e.deltaY > 0 ? -1 : 1;
+      let factor = 0.06;
+      if (dt < 40) factor = 0.55;
+      else if (dt < 80) factor = 0.28;
+      else if (dt < 150) factor = 0.14;
+      map.setZoom(map.getZoom() + dir * factor, { animate: false });
+    };
+    el.addEventListener('wheel', handler, { passive: false });
+    return () => el.removeEventListener('wheel', handler);
+  }, [map]);
+  return null;
+}
+
+function MapClickHandler({
+  onMapClick,
+  deploymentMode,
+}: {
+  onMapClick?: (lat: number, lng: number) => void;
+  deploymentMode?: boolean;
+}) {
+  useMapEvents({
+    click(e) {
+      if (deploymentMode && onMapClick) onMapClick(e.latlng.lat, e.latlng.lng);
+    },
+  });
+  return null;
+}
+
+// ─── Props ────────────────────────────────────────────────────────────────────
 
 interface Props {
   userLocation: { lat: number; lng: number } | null;
@@ -48,69 +185,7 @@ interface Props {
   userRole?: 'collector' | 'employee' | null;
 }
 
-function MapEvents({ onMapClick, deploymentMode }: { onMapClick?: (lat: number, lng: number) => void, deploymentMode?: boolean }) {
-  useMapEvents({
-    click(e) {
-      if (deploymentMode && onMapClick) {
-        onMapClick(e.latlng.lat, e.latlng.lng);
-      }
-    },
-  });
-  return null;
-}
-
-function FitToContent({ userLocation, dustbins, incidents }: { userLocation: { lat: number; lng: number } | null; dustbins: Dustbin[]; incidents: Incident[] }) {
-  const map = useMap();
-  const fittedRef = useRef(false);
-
-  useEffect(() => {
-    if (fittedRef.current) return;
-
-    const points: LatLngExpression[] = [];
-    if (userLocation) points.push([userLocation.lat, userLocation.lng]);
-    dustbins.forEach(b => points.push([b.coordinates.lat, b.coordinates.lng]));
-    incidents.forEach(i => points.push([i.coordinates.lat, i.coordinates.lng]));
-
-    if (points.length === 0) return;
-    const bounds = L.latLngBounds(points as [number, number][]);
-    map.fitBounds(bounds.pad(0.2), { maxZoom: 19, animate: false });
-    fittedRef.current = true;
-  }, [map, userLocation, dustbins, incidents]);
-
-  return null;
-}
-
-function AdaptiveZoom() {
-  const map = useMap();
-  const lastTimeRef = useRef<number | null>(null);
-
-  useEffect(() => {
-    const container = map.getContainer();
-
-    const onWheel = (e: WheelEvent) => {
-      e.preventDefault();
-
-      const now = performance.now();
-      const last = lastTimeRef.current;
-      lastTimeRef.current = now;
-
-      const deltaTime = last ? now - last : 100;
-      const direction = e.deltaY > 0 ? -1 : 1;
-
-      let zoomFactor = 0.05;
-      if (deltaTime < 40) zoomFactor = 0.5;
-      else if (deltaTime < 80) zoomFactor = 0.25;
-      else if (deltaTime < 150) zoomFactor = 0.125;
-
-      map.setZoom(map.getZoom() + direction * zoomFactor, { animate: false });
-    };
-
-    container.addEventListener('wheel', onWheel, { passive: false });
-    return () => container.removeEventListener('wheel', onWheel);
-  }, [map]);
-
-  return null;
-}
+// ─── Component ────────────────────────────────────────────────────────────────
 
 export default function UnifiedMap({
   userLocation,
@@ -120,200 +195,552 @@ export default function UnifiedMap({
   onIncidentSelect,
   onMapClick,
   deploymentMode,
-  userRole
+  userRole,
 }: Props) {
   const [selectedDustbin, setSelectedDustbin] = useState<Dustbin | null>(null);
   const [selectedIncident, setSelectedIncident] = useState<Incident | null>(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
 
-  const [currentDustbinImage, setCurrentDustbinImage] = useState<string | null>(null);
+  const [route, setRoute] = useState<LatLngExpression[] | null>(null);
+  const [routeMeta, setRouteMeta] = useState<{ distanceM: number; durationS: number } | null>(null);
+  const [routeLoading, setRouteLoading] = useState(false);
+
+  const [flyTarget, setFlyTarget] = useState<{ lat: number; lng: number; zoom?: number } | null>(null);
+
+  const [dustbinImage, setDustbinImage] = useState<string | null>(null);
   const [imageLoading, setImageLoading] = useState(false);
 
+  const [panelOpen, setPanelOpen] = useState(false);
+
+  const autoNavigatedRef = useRef(false);
+
+  // Employee: auto-navigate to nearest item once location arrives
+  useEffect(() => {
+    if (autoNavigatedRef.current) return;
+    if (!userLocation) return;
+    if (userRole !== 'employee') return;
+    if (dustbins.length === 0 && incidents.length === 0) return;
+
+    autoNavigatedRef.current = true;
+
+    type NearestEntry =
+      | { item: Dustbin; dist: number; type: 'dustbin' }
+      | { item: Incident; dist: number; type: 'incident' };
+
+    let nearest: NearestEntry | null = null;
+
+    dustbins.forEach((bin) => {
+      const d = haversine(userLocation, bin.coordinates);
+      if (!nearest || d < nearest.dist) nearest = { item: bin, dist: d, type: 'dustbin' };
+    });
+
+    incidents.forEach((inc) => {
+      const d = haversine(userLocation, inc.coordinates);
+      if (!nearest || d < nearest.dist) nearest = { item: inc, dist: d, type: 'incident' };
+    });
+
+    if (!nearest) return;
+
+    if (nearest.type === 'dustbin') {
+      handleSelectDustbin(nearest.item as Dustbin);
+    } else {
+      handleSelectIncident(nearest.item as Incident);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [userLocation, dustbins, incidents, userRole]);
+
+  // ── Select dustbin ──────────────────────────────────────────────────────────
+  const handleSelectDustbin = useCallback(
+    async (bin: Dustbin) => {
+      setSelectedDustbin(bin);
+      setSelectedIncident(null);
+      setPanelOpen(true);
+      onDustbinSelect?.(bin);
+      onIncidentSelect?.(null);
+      setFlyTarget({ lat: bin.coordinates.lat, lng: bin.coordinates.lng, zoom: 18 });
+
+      // Fetch latest image
+      setImageLoading(true);
+      setDustbinImage(null);
+      let imageSet = false;
+      try {
+        const token = localStorage.getItem('token');
+        const res = await fetch(`/api/reports/latest-disposal-image?dustbinId=${bin._id}`, {
+          headers: { Authorization: token ? `Bearer ${token}` : '' },
+        });
+        if (res.ok) {
+          const data = await res.json();
+          if (data?.disposalImageBase64) {
+            const img: string = data.disposalImageBase64;
+            setDustbinImage(img.startsWith('data:') ? img : `data:image/jpeg;base64,${img}`);
+            imageSet = true;
+          }
+        }
+      } catch {
+        // fall through
+      }
+      if (!imageSet) {
+        const fallback: string | undefined =
+          (bin as any).photoBase64 || (bin as any).initialPhotoBase64;
+        if (fallback) {
+          setDustbinImage(fallback.startsWith('data:') ? fallback : `data:image/jpeg;base64,${fallback}`);
+        }
+      }
+      setImageLoading(false);
+
+      // Fetch walking route
+      if (userLocation) {
+        setRouteLoading(true);
+        setRoute(null);
+        setRouteMeta(null);
+        const r = await fetchOSRMRoute(userLocation, bin.coordinates);
+        if (r) {
+          setRoute(r.path);
+          setRouteMeta({ distanceM: r.distanceM, durationS: r.durationS });
+        }
+        setRouteLoading(false);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [userLocation, onDustbinSelect, onIncidentSelect]
+  );
+
+  // ── Select incident ─────────────────────────────────────────────────────────
+  const handleSelectIncident = useCallback(
+    async (inc: Incident) => {
+      setSelectedIncident(inc);
+      setSelectedDustbin(null);
+      setPanelOpen(true);
+      onIncidentSelect?.(inc);
+      onDustbinSelect?.(null);
+      setFlyTarget({ lat: inc.coordinates.lat, lng: inc.coordinates.lng, zoom: 18 });
+
+      if (userLocation) {
+        setRouteLoading(true);
+        setRoute(null);
+        setRouteMeta(null);
+        const r = await fetchOSRMRoute(userLocation, inc.coordinates);
+        if (r) {
+          setRoute(r.path);
+          setRouteMeta({ distanceM: r.distanceM, durationS: r.durationS });
+        }
+        setRouteLoading(false);
+      }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [userLocation, onIncidentSelect, onDustbinSelect]
+  );
+
+  const clearSelection = () => {
+    setSelectedDustbin(null);
+    setSelectedIncident(null);
+    setRoute(null);
+    setRouteMeta(null);
+    setPanelOpen(false);
+    onDustbinSelect?.(null);
+    onIncidentSelect?.(null);
+  };
+
+  const googleNavUrl = (coords: { lat: number; lng: number }) =>
+    userLocation
+      ? `https://www.google.com/maps/dir/?api=1&origin=${userLocation.lat},${userLocation.lng}&destination=${coords.lat},${coords.lng}&travelmode=walking`
+      : `https://www.google.com/maps/search/?api=1&query=${coords.lat},${coords.lng}`;
+
+  const defaultCenter: LatLngExpression = userLocation
+    ? [userLocation.lat, userLocation.lng]
+    : [20.5937, 78.9629];
+
+  // ── Render ──────────────────────────────────────────────────────────────────
   return (
     <FullscreenMap isFullscreen={isFullscreen} onToggleFullscreen={() => setIsFullscreen(!isFullscreen)}>
-      <div className={`relative w-full h-full rounded-lg overflow-hidden border shadow-sm ${deploymentMode ? 'cursor-crosshair' : ''}`}>
+      <div
+        style={{
+          position: 'relative',
+          width: '100%',
+          height: '100%',
+          overflow: 'hidden',
+          borderRadius: '0.5rem',
+          isolation: 'isolate',
+        }}
+        className={deploymentMode ? 'cursor-crosshair' : ''}
+      >
+        {/* Leaflet CSS overrides */}
+        <style>{`
+          .leaflet-container { font-family: inherit; }
+          .leaflet-control-zoom {
+            border: none !important;
+            box-shadow: 0 2px 10px rgba(0,0,0,.2) !important;
+            margin-bottom: 8px !important;
+          }
+          .leaflet-control-zoom a {
+            color: #333 !important;
+            width: 32px !important;
+            height: 32px !important;
+            line-height: 32px !important;
+            font-size: 18px !important;
+          }
+          .leaflet-popup-content-wrapper {
+            border-radius: 12px !important;
+            box-shadow: 0 8px 32px rgba(0,0,0,.18) !important;
+            padding: 0 !important;
+          }
+          .leaflet-popup-content { margin: 0 !important; }
+          .leaflet-popup-tip-container { display: none; }
+        `}</style>
+
         <MapContainer
-          center={userLocation ? [userLocation.lat, userLocation.lng] : [20.5937, 78.9629]}
-          zoom={19}
-          maxZoom={22}
-          minZoom={1}
-          zoomSnap={0.1}
-          zoomDelta={0.1}
-          wheelPxPerZoomLevel={40}
-          style={{ height: '100%', width: '100%' }}
-          {...({ center: userLocation ? [userLocation.lat, userLocation.lng] : [20.5937, 78.9629] } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
+          {...({
+            center: defaultCenter,
+            zoom: 13,
+            maxZoom: 22,
+            minZoom: 3,
+            zoomSnap: 0.1,
+            zoomDelta: 0.5,
+            style: { height: '100%', width: '100%' },
+            scrollWheelZoom: false,
+            zoomControl: true,
+          } as any)}
         >
           <TileLayer
-            attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
-            url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-            maxZoom={22}
-            maxNativeZoom={19}
-            {...({ attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
+            {...({
+              attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors',
+              url: 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              maxZoom: 22,
+              maxNativeZoom: 19,
+            } as any)}
           />
-          <AdaptiveZoom />
-          <FitToContent userLocation={userLocation} dustbins={dustbins} incidents={incidents} />
-          <MapEvents onMapClick={onMapClick} deploymentMode={deploymentMode} />
 
+          <AdaptiveZoom />
+          <LocateOnLoad userLocation={userLocation} />
+          <FlyToTarget target={flyTarget} />
+          <MapClickHandler onMapClick={onMapClick} deploymentMode={deploymentMode} />
+
+          {/* User dot */}
           {userLocation && (
             <Marker
-              position={[userLocation.lat, userLocation.lng]}
-              icon={UserIcon as any} // eslint-disable-line @typescript-eslint/no-explicit-any
-              {...({ icon: UserIcon } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
+              {...({
+                position: [userLocation.lat, userLocation.lng] as [number, number],
+                icon: makeUserIcon(),
+                zIndexOffset: 1000,
+              } as any)}
             >
-              <Popup>You are here</Popup>
+              <Popup>
+                <div style={{ padding: '10px 14px', fontWeight: 600, color: '#2563eb' }}>
+                  📍 You are here
+                </div>
+              </Popup>
             </Marker>
           )}
 
-          {dustbins.map(bin => (
+          {/* Dustbin markers */}
+          {dustbins.map((bin) => (
             <Marker
               key={bin._id}
-              position={[bin.coordinates.lat, bin.coordinates.lng]}
-              {...({ icon: DustbinIcon(bin.status, selectedDustbin?._id === bin._id, bin.urgent) } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
-              eventHandlers={{
-                click: () => {
-                  setSelectedDustbin(bin);
-                  setSelectedIncident(null);
-                  onDustbinSelect?.(bin);
-                  onIncidentSelect?.(null);
+              {...({
+                position: [bin.coordinates.lat, bin.coordinates.lng] as [number, number],
+                icon: makeDustbinIcon(bin.status, selectedDustbin?._id === bin._id, bin.urgent),
+                eventHandlers: { click: () => handleSelectDustbin(bin) },
+                zIndexOffset: selectedDustbin?._id === bin._id ? 500 : 0,
+              } as any)}
+            />
+          ))}
 
-                  (async () => {
-                    try {
-                      setImageLoading(true);
-                      setCurrentDustbinImage(null);
+          {/* Incident markers */}
+          {incidents.map((inc) => (
+            <Marker
+              key={inc._id}
+              {...({
+                position: [inc.coordinates.lat, inc.coordinates.lng] as [number, number],
+                icon: makeIncidentIcon(selectedIncident?._id === inc._id, inc.urgency),
+                eventHandlers: { click: () => handleSelectIncident(inc) },
+                zIndexOffset: selectedIncident?._id === inc._id ? 500 : 0,
+              } as any)}
+            />
+          ))}
 
-                      const token = localStorage.getItem("token");
-                      const res = await fetch(
-                        `/api/reports/latest-disposal-image?dustbinId=${bin._id}`,
-                        {
-                          headers: {
-                            Authorization: token ? `Bearer ${token}` : "",
-                          },
-                        }
-                      );
+          {/* Route lines */}
+          {route && (
+            <>
+              <Polyline
+                {...({ positions: route, pathOptions: { color: '#1a56db', weight: 8, opacity: 0.18 } } as any)}
+              />
+              <Polyline
+                {...({ positions: route, pathOptions: { color: '#4285f4', weight: 5, opacity: 0.95 } } as any)}
+              />
+              {userLocation && (
+                <CircleMarker
+                  {...({
+                    center: [userLocation.lat, userLocation.lng] as [number, number],
+                    radius: 7,
+                    pathOptions: { color: '#fff', fillColor: '#4285f4', fillOpacity: 1, weight: 2 },
+                  } as any)}
+                />
+              )}
+              {selectedDustbin && (
+                <CircleMarker
+                  {...({
+                    center: [selectedDustbin.coordinates.lat, selectedDustbin.coordinates.lng] as [number, number],
+                    radius: 7,
+                    pathOptions: { color: '#fff', fillColor: '#16a34a', fillOpacity: 1, weight: 2 },
+                  } as any)}
+                />
+              )}
+              {selectedIncident && (
+                <CircleMarker
+                  {...({
+                    center: [selectedIncident.coordinates.lat, selectedIncident.coordinates.lng] as [number, number],
+                    radius: 7,
+                    pathOptions: { color: '#fff', fillColor: '#ef4444', fillOpacity: 1, weight: 2 },
+                  } as any)}
+                />
+              )}
+            </>
+          )}
+        </MapContainer>
 
-                      if (res.ok) {
-                        const data = await res.json();
-                        if (data?.disposalImageBase64) {
-                          const img = data.disposalImageBase64;
-                          setCurrentDustbinImage(
-                            img.startsWith("data:") ? img : `data:image/png;base64,${img}`
-                          );
-                          return;
-                        }
-                      }
+        {/* Deployment hint */}
+        {deploymentMode && (
+          <div
+            style={{
+              position: 'absolute', top: 12, left: '50%', transform: 'translateX(-50%)',
+              zIndex: 1000, pointerEvents: 'none',
+              background: 'rgba(0,0,0,.82)', color: '#fff',
+              padding: '8px 20px', borderRadius: 24, fontSize: 13, fontWeight: 500,
+              boxShadow: '0 4px 16px rgba(0,0,0,.3)', whiteSpace: 'nowrap',
+            }}
+          >
+            📍 Tap on map to place dustbin
+          </div>
+        )}
 
-                      // Fallback to deployment image
-                      if (bin.photoBase64) {
-                        setCurrentDustbinImage(
-                          bin.photoBase64.startsWith("data:")
-                            ? bin.photoBase64
-                            : `data:image/png;base64,${bin.photoBase64}`
-                        );
-                      } else if ((bin as any).initialPhotoBase64) {
-                        const img = (bin as any).initialPhotoBase64;
-                        setCurrentDustbinImage(
-                          img.startsWith("data:") ? img : `data:image/png;base64,${img}`
-                        );
-                      }
-                    } catch {
-                      if (bin.photoBase64) {
-                        setCurrentDustbinImage(
-                          bin.photoBase64.startsWith("data:")
-                            ? bin.photoBase64
-                            : `data:image/png;base64,${bin.photoBase64}`
-                        );
-                      }
-                    } finally {
-                      setImageLoading(false);
-                    }
-                  })();
-                }
+        {/* Route calculating spinner */}
+        {routeLoading && (
+          <div
+            style={{
+              position: 'absolute', bottom: 100, left: '50%', transform: 'translateX(-50%)',
+              zIndex: 1000, background: 'rgba(255,255,255,.95)',
+              padding: '8px 16px', borderRadius: 20, fontSize: 13,
+              display: 'flex', alignItems: 'center', gap: 8,
+              boxShadow: '0 2px 12px rgba(0,0,0,.15)', whiteSpace: 'nowrap',
+            }}
+          >
+            <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
+            Calculating route…
+          </div>
+        )}
+
+        {/* Bottom info panel */}
+        {panelOpen && (selectedDustbin || selectedIncident) && (
+          <div
+            style={{
+              position: 'absolute', bottom: 0, left: 0, right: 0, zIndex: 1001,
+              background: '#fff', borderRadius: '16px 16px 0 0',
+              boxShadow: '0 -4px 32px rgba(0,0,0,.18)', maxHeight: '60%', overflowY: 'auto',
+            }}
+          >
+            {/* Handle bar */}
+            <div style={{ display: 'flex', justifyContent: 'center', padding: '10px 0 4px' }}>
+              <div style={{ width: 40, height: 4, borderRadius: 2, background: '#e5e7eb' }} />
+            </div>
+
+            {/* Close */}
+            <button
+              onClick={clearSelection}
+              style={{
+                position: 'absolute', top: 12, right: 14, zIndex: 2,
+                background: 'none', border: 'none', cursor: 'pointer', color: '#6b7280', padding: 4,
               }}
             >
-              <Popup>
-                <div className="p-2 min-w-[200px]">
-                  <div className="mb-2">
-                    <p className="text-xs font-medium text-gray-600 mb-1">Current State</p>
+              <X className="h-5 w-5" />
+            </button>
 
-                    {imageLoading ? (
-                      <div className="w-full h-32 flex items-center justify-center text-xs text-gray-500 border rounded-md">
-                        Loading image…
+            <div style={{ padding: '0 16px 20px' }}>
+
+              {/* Dustbin panel */}
+              {selectedDustbin && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                    <span style={{ fontSize: 24 }}>🗑️</span>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 16 }}>{selectedDustbin.name}</div>
+                      <div style={{ fontSize: 12, color: '#6b7280' }}>
+                        {selectedDustbin.sector || 'Unknown sector'}
                       </div>
-                    ) : currentDustbinImage ? (
-                      <img
-                        src={currentDustbinImage}
-                        alt="Current Dustbin State"
-                        className="w-full h-32 object-cover rounded-md border"
-                      />
+                    </div>
+                    <span
+                      style={{
+                        marginLeft: 'auto', padding: '4px 10px', borderRadius: 20,
+                        fontSize: 11, fontWeight: 600,
+                        background:
+                          selectedDustbin.status === 'full' ? '#fee2e2'
+                            : selectedDustbin.status === 'maintenance' ? '#fef3c7'
+                              : '#dcfce7',
+                        color:
+                          selectedDustbin.status === 'full' ? '#dc2626'
+                            : selectedDustbin.status === 'maintenance' ? '#d97706'
+                              : '#16a34a',
+                      }}
+                    >
+                      {selectedDustbin.urgent ? '🚨 Urgent' : selectedDustbin.status || 'active'}
+                    </span>
+                  </div>
+
+                  {/* Image */}
+                  <div style={{ marginBottom: 12, borderRadius: 10, overflow: 'hidden', background: '#f3f4f6', height: 140 }}>
+                    {imageLoading ? (
+                      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, color: '#9ca3af', fontSize: 13 }}>
+                        <Loader2 className="h-5 w-5 animate-spin" /> Loading image…
+                      </div>
+                    ) : dustbinImage ? (
+                      <img src={dustbinImage} alt="Dustbin state" style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
                     ) : (
-                      <div className="w-full h-32 flex items-center justify-center text-xs text-gray-500 border rounded-md">
+                      <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#9ca3af', fontSize: 13 }}>
                         No image available
                       </div>
                     )}
                   </div>
 
-                  <h3 className="font-bold text-lg">{bin.name}</h3>
-                  <p className="text-sm text-gray-600 mb-2">{bin.sector || 'Unknown Sector'}</p>
-                  <div className="flex gap-2 mb-2">
-                    <span className={`px-2 py-0.5 rounded text-xs font-medium capitalize ${bin.status === 'active' ? 'bg-green-100 text-green-800' :
-                      bin.status === 'full' ? 'bg-red-100 text-red-800' :
-                        'bg-gray-100 text-gray-800'
-                      }`}>
-                      {bin.status}
-                    </span>
-                    <span className="px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-800 capitalize">
-                      {bin.type}
-                    </span>
-                  </div>
-                  <div className="text-xs text-gray-500 mt-2">
-                    Fill Level: {bin.fillLevel || 0}%
-                    <div className="w-full h-1.5 bg-gray-200 rounded-full mt-1 overflow-hidden">
-                      <div
-                        className={`h-full ${bin.fillLevel && bin.fillLevel > 80 ? 'bg-red-500' : 'bg-green-500'}`}
-                        style={{ width: `${bin.fillLevel || 0}%` }}
-                      />
+                  {/* Fill level */}
+                  <div style={{ marginBottom: 12 }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, marginBottom: 4 }}>
+                      <span style={{ color: '#6b7280' }}>Fill Level</span>
+                      <span style={{ fontWeight: 600, color: (selectedDustbin.fillLevel || 0) > 80 ? '#dc2626' : '#16a34a' }}>
+                        {selectedDustbin.fillLevel || 0}%
+                      </span>
+                    </div>
+                    <div style={{ height: 8, borderRadius: 4, background: '#e5e7eb', overflow: 'hidden' }}>
+                      <div style={{
+                        height: '100%', borderRadius: 4,
+                        width: `${selectedDustbin.fillLevel || 0}%`,
+                        background:
+                          (selectedDustbin.fillLevel || 0) > 80 ? '#ef4444'
+                            : (selectedDustbin.fillLevel || 0) > 50 ? '#f59e0b'
+                              : '#22c55e',
+                        transition: 'width .4s',
+                      }} />
                     </div>
                   </div>
-                </div>
-              </Popup>
-            </Marker>
-          ))}
 
-          {incidents.map(incident => (
-            <Marker
-              key={incident._id}
-              position={[incident.coordinates.lat, incident.coordinates.lng]}
-              {...({ icon: IncidentIcon(selectedIncident?._id === incident._id, incident.urgency) } as any)} // eslint-disable-line @typescript-eslint/no-explicit-any
-              eventHandlers={{
-                click: () => {
-                  setSelectedIncident(incident);
-                  setSelectedDustbin(null);
-                  onIncidentSelect?.(incident);
-                  onDustbinSelect?.(null);
-                }
-              }}
-            >
-              <Popup>
-                <div className="p-2 min-w-[200px]">
-                  <h3 className="font-bold text-lg capitalize">{incident.category}</h3>
-                  <p className="text-sm text-gray-600 mb-2">{incident.description || 'No description'}</p>
-                  <div className="flex gap-2 mb-2">
-                    <span className={`px-2 py-0.5 rounded text-xs font-medium capitalize ${incident.urgency === 'critical' ? 'bg-red-100 text-red-800' :
-                      incident.urgency === 'high' ? 'bg-orange-100 text-orange-800' :
-                        'bg-yellow-100 text-yellow-800'
-                      }`}>
-                      {incident.urgency} Priority
+                  {/* Route stats */}
+                  {routeMeta && (
+                    <div style={{ display: 'flex', gap: 12, marginBottom: 12, background: '#eff6ff', borderRadius: 10, padding: '10px 14px' }}>
+                      <div style={{ textAlign: 'center', flex: 1 }}>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: '#2563eb' }}>{formatDist(routeMeta.distanceM)}</div>
+                        <div style={{ fontSize: 11, color: '#6b7280' }}>Distance</div>
+                      </div>
+                      <div style={{ width: 1, background: '#bfdbfe' }} />
+                      <div style={{ textAlign: 'center', flex: 1 }}>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: '#2563eb' }}>{formatTime(routeMeta.durationS)}</div>
+                        <div style={{ fontSize: 11, color: '#6b7280' }}>Walking time</div>
+                      </div>
+                    </div>
+                  )}
+
+                  <a
+                    href={googleNavUrl(selectedDustbin.coordinates)}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                      width: '100%', padding: '12px', borderRadius: 10,
+                      background: '#4285f4', color: '#fff', fontWeight: 600, fontSize: 14,
+                      textDecoration: 'none',
+                    }}
+                  >
+                    <Navigation className="h-4 w-4" /> Navigate with Google Maps
+                  </a>
+                </>
+              )}
+
+              {/* Incident panel */}
+              {selectedIncident && (
+                <>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 12 }}>
+                    <span style={{ fontSize: 24 }}>⚠️</span>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 16, textTransform: 'capitalize' }}>
+                        {selectedIncident.category.replace(/_/g, ' ')}
+                      </div>
+                      <div style={{ fontSize: 12, color: '#6b7280', textTransform: 'capitalize' }}>
+                        {selectedIncident.status}
+                      </div>
+                    </div>
+                    <span
+                      style={{
+                        marginLeft: 'auto', padding: '4px 10px', borderRadius: 20,
+                        fontSize: 11, fontWeight: 600,
+                        background:
+                          selectedIncident.urgency === 'critical' ? '#fee2e2'
+                            : selectedIncident.urgency === 'high' ? '#fff7ed'
+                              : '#fefce8',
+                        color:
+                          selectedIncident.urgency === 'critical' ? '#dc2626'
+                            : selectedIncident.urgency === 'high' ? '#ea580c'
+                              : '#ca8a04',
+                      }}
+                    >
+                      {selectedIncident.urgency}
                     </span>
                   </div>
-                </div>
-              </Popup>
-            </Marker>
-          ))}
-        </MapContainer>
 
-        {deploymentMode && (
-          <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] bg-black/80 text-white px-4 py-2 rounded-full text-sm font-medium shadow-lg pointer-events-none">
-            Click on map to place dustbin
+                  {userRole === 'employee' ? (
+                    <>
+                      {selectedIncident.imageBase64 && (
+                        <div style={{ marginBottom: 12, borderRadius: 10, overflow: 'hidden', height: 140 }}>
+                          <img
+                            src={
+                              selectedIncident.imageBase64.startsWith('data:')
+                                ? selectedIncident.imageBase64
+                                : `data:image/jpeg;base64,${selectedIncident.imageBase64}`
+                            }
+                            alt="Incident"
+                            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                          />
+                        </div>
+                      )}
+                      {selectedIncident.description && (
+                        <div style={{ fontSize: 13, color: '#374151', marginBottom: 12, padding: '10px 12px', background: '#f9fafb', borderRadius: 8 }}>
+                          {selectedIncident.description}
+                        </div>
+                      )}
+                    </>
+                  ) : (
+                    <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 12, padding: '10px 12px', background: '#f9fafb', borderRadius: 8 }}>
+                      Incident reported nearby. Details are visible to field employees only.
+                    </div>
+                  )}
+
+                  {routeMeta && (
+                    <div style={{ display: 'flex', gap: 12, marginBottom: 12, background: '#fff7ed', borderRadius: 10, padding: '10px 14px' }}>
+                      <div style={{ textAlign: 'center', flex: 1 }}>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: '#ea580c' }}>{formatDist(routeMeta.distanceM)}</div>
+                        <div style={{ fontSize: 11, color: '#6b7280' }}>Distance</div>
+                      </div>
+                      <div style={{ width: 1, background: '#fed7aa' }} />
+                      <div style={{ textAlign: 'center', flex: 1 }}>
+                        <div style={{ fontSize: 18, fontWeight: 700, color: '#ea580c' }}>{formatTime(routeMeta.durationS)}</div>
+                        <div style={{ fontSize: 11, color: '#6b7280' }}>Walking time</div>
+                      </div>
+                    </div>
+                  )}
+
+                  <a
+                    href={googleNavUrl(selectedIncident.coordinates)}
+                    target="_blank"
+                    rel="noreferrer"
+                    style={{
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                      width: '100%', padding: '12px', borderRadius: 10,
+                      background: '#ef4444', color: '#fff', fontWeight: 600, fontSize: 14,
+                      textDecoration: 'none',
+                    }}
+                  >
+                    <Navigation className="h-4 w-4" /> Navigate to Incident
+                  </a>
+                </>
+              )}
+
+            </div>
           </div>
         )}
       </div>

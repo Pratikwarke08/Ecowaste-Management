@@ -8,18 +8,27 @@ interface Props {
 }
 
 export default function FullscreenMap({ children, isFullscreen, onToggleFullscreen }: Props) {
-  const [isClient, setIsClient] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    setIsClient(true);
+    setMounted(true);
   }, []);
 
-  if (!isClient) {
+  useEffect(() => {
+    if (!mounted) return;
+    if (isFullscreen) {
+      document.body.style.overflow = 'hidden';
+    } else {
+      document.body.style.overflow = '';
+    }
+    return () => {
+      document.body.style.overflow = '';
+    };
+  }, [isFullscreen, mounted]);
+
+  if (!mounted) {
     return (
-      <div
-        className="relative w-full h-full"
-        style={{ touchAction: 'none', overscrollBehavior: 'contain' }}
-      >
+      <div className="relative w-full h-full" style={{ isolation: 'isolate' }}>
         {children}
       </div>
     );
@@ -28,17 +37,20 @@ export default function FullscreenMap({ children, isFullscreen, onToggleFullscre
   if (isFullscreen) {
     return (
       <div
-        className="fixed inset-0 z-[9999] bg-background"
-        style={{ touchAction: 'none', overscrollBehavior: 'contain' }}
+        style={{
+          position: 'fixed',
+          inset: 0,
+          zIndex: 9999,
+          background: '#fff',
+          isolation: 'isolate',
+        }}
       >
-        <div
-          className="relative w-full h-full"
-          style={{ touchAction: 'none', overscrollBehavior: 'contain' }}
-        >
+        <div className="relative w-full h-full">
           {children}
           <button
             onClick={onToggleFullscreen}
-            className="absolute top-4 right-4 z-[10000] bg-white/90 backdrop-blur-sm hover:bg-white text-gray-800 p-2 rounded-lg shadow-lg transition-all duration-200 hover:scale-105"
+            style={{ position: 'absolute', top: 12, right: 12, zIndex: 10000 }}
+            className="bg-white/95 hover:bg-white text-gray-800 p-2 rounded-lg shadow-lg transition-all duration-200 hover:scale-105"
             title="Exit fullscreen"
           >
             <Minimize2 className="h-5 w-5" />
@@ -49,14 +61,12 @@ export default function FullscreenMap({ children, isFullscreen, onToggleFullscre
   }
 
   return (
-    <div
-      className="relative w-full h-full"
-      style={{ touchAction: 'none', overscrollBehavior: 'contain' }}
-    >
+    <div className="relative w-full h-full" style={{ isolation: 'isolate' }}>
       {children}
       <button
         onClick={onToggleFullscreen}
-        className="absolute top-2 right-2 z-[1000] bg-white/90 backdrop-blur-sm hover:bg-white text-gray-800 p-1.5 rounded-md shadow-md transition-all duration-200 hover:scale-105"
+        style={{ position: 'absolute', top: 8, right: 8, zIndex: 1000 }}
+        className="bg-white/95 hover:bg-white text-gray-800 p-1.5 rounded-md shadow-md transition-all duration-200 hover:scale-105"
         title="View fullscreen"
       >
         <Maximize2 className="h-4 w-4" />

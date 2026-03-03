@@ -197,7 +197,7 @@ export default function IncidentsReview() {
                       <img src={i.imageBase64} alt={i.category} className="w-28 h-20 object-cover rounded" />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center justify-between">
-                          <div className="font-medium capitalize">{i.category.replace(/_/g,' ')}</div>
+                          <div className="font-medium capitalize">{i.category.replace(/_/g, ' ')}</div>
                           <Badge className="capitalize">{i.urgency}</Badge>
                         </div>
                         <div className="text-xs text-muted-foreground truncate">{i.description || 'No description'}</div>
@@ -245,11 +245,11 @@ export default function IncidentsReview() {
                         <img src={i.imageBase64} alt={i.category} className="w-28 h-20 object-cover rounded" />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between">
-                            <div className="font-medium capitalize">{i.category.replace(/_/g,' ')}</div>
+                            <div className="font-medium capitalize">{i.category.replace(/_/g, ' ')}</div>
                             {i.status === 'resolved' && !i.rewarded ? (
                               <Badge variant="secondary" className="normal-case">Resolved but waiting for points to be rewarded</Badge>
                             ) : (
-                              <Badge variant="secondary" className="capitalize">{i.status.replace(/_/g,' ')}</Badge>
+                              <Badge variant="secondary" className="capitalize">{i.status.replace(/_/g, ' ')}</Badge>
                             )}
                           </div>
                           <div className="text-xs text-muted-foreground truncate">{i.description || 'No description'}</div>
@@ -301,13 +301,13 @@ export default function IncidentsReview() {
                 <div className="p-6">
                   <div className="flex items-center justify-between mb-4">
                     <div>
-                      <h2 className="text-xl font-semibold capitalize">{historySelected.category.replace(/_/g,' ')}</h2>
+                      <h2 className="text-xl font-semibold capitalize">{historySelected.category.replace(/_/g, ' ')}</h2>
                       <p className="text-sm text-muted-foreground">{new Date((historySelected as Incident & { updatedAt?: string }).updatedAt || Date.now()).toLocaleString()}</p>
                     </div>
                     {historySelected.status === 'resolved' && !historySelected.rewarded ? (
                       <Badge variant="secondary" className="normal-case">Resolved but waiting for points to be rewarded</Badge>
                     ) : (
-                      <Badge variant="secondary" className="capitalize">{historySelected.status.replace(/_/g,' ')}</Badge>
+                      <Badge variant="secondary" className="capitalize">{historySelected.status.replace(/_/g, ' ')}</Badge>
                     )}
                   </div>
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -339,7 +339,7 @@ export default function IncidentsReview() {
                     <div>
                       <h3 className="font-medium mb-2">Location</h3>
                       <div className="h-64 rounded-lg overflow-hidden border">
-                        <IncidentMap userLocation={null} incidents={[historySelected]} onSelect={() => {}} />
+                        <IncidentMap userLocation={null} incidents={[historySelected]} onSelect={() => { }} />
                       </div>
                     </div>
                   </div>

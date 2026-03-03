@@ -393,12 +393,12 @@ const Dustbins = () => {
     : 0;
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-background overflow-x-hidden">
       <Navigation userRole={userType} />
       <main className="lg:ml-64 p-6">
         <div className="max-w-6xl mx-auto space-y-6">
           <div className="bg-gradient-eco rounded-lg p-6 text-white">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
               <div>
                 <h1 className="text-2xl font-bold mb-2">Dustbin Management</h1>
                 <p className="text-white/90">Monitor and manage dustbin locations across all sectors</p>
@@ -542,8 +542,8 @@ const Dustbins = () => {
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="edit-sector">Sector</Label>
-                      <Select 
-                        value={editingDustbin.sector || ''} 
+                      <Select
+                        value={editingDustbin.sector || ''}
                         onValueChange={(value) => setEditingDustbin({ ...editingDustbin, sector: value })}
                       >
                         <SelectTrigger>
@@ -560,8 +560,8 @@ const Dustbins = () => {
                     </div>
                     <div className="space-y-2">
                       <Label htmlFor="edit-type">Waste Type</Label>
-                      <Select 
-                        value={editingDustbin.type} 
+                      <Select
+                        value={editingDustbin.type}
                         onValueChange={(value) => setEditingDustbin({ ...editingDustbin, type: value })}
                       >
                         <SelectTrigger>
@@ -579,8 +579,8 @@ const Dustbins = () => {
                   <div className="space-y-4">
                     <div className="space-y-2">
                       <Label htmlFor="edit-status">Status</Label>
-                      <Select 
-                        value={editingDustbin.status} 
+                      <Select
+                        value={editingDustbin.status}
                         onValueChange={(value: 'active' | 'inactive' | 'maintenance') => setEditingDustbin({ ...editingDustbin, status: value })}
                       >
                         <SelectTrigger>
@@ -617,7 +617,7 @@ const Dustbins = () => {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <Button 
+                  <Button
                     onClick={async () => {
                       try {
                         await apiFetch(`/dustbins/${editingDustbin._id}`, {
@@ -647,7 +647,7 @@ const Dustbins = () => {
                         });
                       }
                     }}
-                    variant="eco" 
+                    variant="eco"
                     className="flex-1"
                   >
                     Save Changes
@@ -886,30 +886,47 @@ const Dustbins = () => {
                 <div className="space-y-4">
                   {filteredDustbins.map((dustbin) => (
                     <div key={dustbin._id} className="p-6 bg-muted/50 rounded-lg space-y-4">
+
+
+
                       <div className="flex items-start justify-between">
+                        {/* LEFT SIDE */}
                         <div className="space-y-1">
                           <div className="flex items-center gap-3">
                             <h3 className="font-bold text-lg">{dustbin.name}</h3>
                             {getStatusBadge(dustbin)}
                           </div>
-                          <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                            <div className="flex items-center gap-1">
-                              <MapPin className="h-3 w-3" />
-                              <span>{dustbin.sector || 'Not set'}</span>
+
+                          {/* DETAILS */}
+                          <div className="text-sm text-muted-foreground">
+                            {/* First Line */}
+                            <div className="flex flex-wrap items-center gap-2">
+                              <div className="flex items-center gap-1">
+                                <MapPin className="h-3 w-3" />
+                                <span>{dustbin.sector || 'Not set'}</span>
+                              </div>
+
+                              <span>•</span>
+                              <span className="capitalize">{dustbin.type}</span>
+
+                              {dustbin.capacityLiters && (
+                                <>
+                                  <span>•</span>
+                                  <span>{dustbin.capacityLiters} L</span>
+                                </>
+                              )}
                             </div>
-                            <span>•</span>
-                            <span className="capitalize">{dustbin.type}</span>
-                            {dustbin.capacityLiters ? (
-                              <>
-                                <span>•</span>
-                                <span>{dustbin.capacityLiters} L</span>
-                              </>
-                            ) : null}
-                            <span>•</span>
-                            <span>ID: {dustbin._id.slice(-6)}</span>
+
+                            {/* Second Line - ID */}
+                            <div className="mt-1 sm:mt-0 sm:inline sm:ml-2">
+                              <span className="hidden sm:inline">• </span>
+                              <span>ID: {dustbin._id.slice(-6)}</span>
+                            </div>
                           </div>
                         </div>
-                        <div className="flex gap-2">
+
+                        {/* RIGHT SIDE (DESKTOP BUTTONS ONLY) */}
+                        <div className="hidden sm:flex gap-2">
                           <Button
                             onClick={() => handleViewLocation(dustbin)}
                             variant="outline"
@@ -918,6 +935,7 @@ const Dustbins = () => {
                             <Eye className="h-3 w-3 mr-1" />
                             View
                           </Button>
+
                           {isEmployee && (
                             <Button
                               variant="outline"
@@ -933,6 +951,8 @@ const Dustbins = () => {
                           )}
                         </div>
                       </div>
+
+
 
                       {latestDisposal[dustbin._id]?.loading && (
                         <p className="text-xs text-muted-foreground mt-2">Loading latest disposal image...</p>
@@ -968,10 +988,9 @@ const Dustbins = () => {
                           <div className="flex items-center gap-2">
                             <div className="flex-1 bg-muted rounded-full h-2">
                               <div
-                                className={`h-2 rounded-full ${
-                                  dustbin.fillLevel >= 90 ? 'bg-destructive' :
+                                className={`h-2 rounded-full ${dustbin.fillLevel >= 90 ? 'bg-destructive' :
                                   dustbin.fillLevel >= 70 ? 'bg-eco-warning' : 'bg-eco-success'
-                                }`}
+                                  }`}
                                 style={{ width: `${Math.min(dustbin.fillLevel, 100)}%` }}
                               />
                             </div>
@@ -1026,6 +1045,34 @@ const Dustbins = () => {
                             </Button>
                           </>
                         )}
+
+                        {/* Mobile View & Edit Buttons */}
+                        <div className="flex  gap-2 w-full sm:hidden mt-2">
+                          <Button
+                            onClick={() => handleViewLocation(dustbin)}
+                            variant="outline"
+                            size="sm"
+                            className="w-full"
+                          >
+                            <Eye className="h-3 w-3 mr-1" />
+                            View
+                          </Button>
+
+                          {isEmployee && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="w-full"
+                              onClick={() => {
+                                setEditingDustbin(dustbin);
+                                setShowEditForm(true);
+                              }}
+                            >
+                              <Edit className="h-3 w-3 mr-1" />
+                              Edit
+                            </Button>
+                          )}
+                        </div>
 
                         {userType === 'collector' && (
                           <Button

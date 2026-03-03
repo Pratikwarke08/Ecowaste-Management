@@ -198,9 +198,9 @@ const SmogTowerWizard: React.FC = () => {
   const role: 'collector' | 'employee' = (user?.role === 'employee') ? 'employee' : 'collector';
 
   return (
-    <div className="min-h-screen flex">
+    <div className="min-h-screen bg-background overflow-x-hidden">
       <Navigation userRole={role} />
-      <main className="flex-1 ml-64 p-6">
+      <main className="lg:ml-64 p-6">
         <div className="space-y-6">
           <div className="bg-gradient-eco rounded-lg p-6 text-white animate-fade-in">
             <h1 className="text-2xl font-bold mb-2">Natural Smog Tower — Deploy & Maintain</h1>
@@ -279,10 +279,16 @@ const SmogTowerWizard: React.FC = () => {
                   {step === 1 && (
                     <div className="space-y-3">
                       <label className="text-xs font-medium">Select scale</label>
-                      <div className="flex gap-2">
-                        <Button variant={localPlan.scale === 'home' ? 'eco' : 'ghost'} onClick={() => handleScaleSelect('home')}>Home Balcony</Button>
-                        <Button variant={localPlan.scale === 'front_yard' ? 'eco' : 'ghost'} onClick={() => handleScaleSelect('front_yard')}>Front Yard</Button>
-                        <Button variant={localPlan.scale === 'community_corner' ? 'eco' : 'ghost'} onClick={() => handleScaleSelect('community_corner')}>Community</Button>
+                      <div className="flex flex-wrap gap-2">
+                        <Button className="flex-1 sm:flex-auto" variant={localPlan.scale === 'home' ? 'eco' : 'ghost'} onClick={() => handleScaleSelect('home')}>
+                          Home Balcony
+                        </Button>
+                        <Button className="flex-1 sm:flex-auto" variant={localPlan.scale === 'front_yard' ? 'eco' : 'ghost'} onClick={() => handleScaleSelect('front_yard')}>
+                          Front Yard
+                        </Button>
+                        <Button className="flex-1 sm:flex-auto" variant={localPlan.scale === 'community_corner' ? 'eco' : 'ghost'} onClick={() => handleScaleSelect('community_corner')}>
+                          Community
+                        </Button>
                       </div>
 
                       <label className="text-xs font-medium">Available space (preset)</label>
@@ -354,7 +360,7 @@ const SmogTowerWizard: React.FC = () => {
                     {plans.map(p => (
                       <div key={p.id} className="flex items-center justify-between p-3 rounded-lg border">
                         <div className="min-w-0">
-                          <p className="font-medium text-sm">{p.scale.replace('_',' ')}</p>
+                          <p className="font-medium text-sm">{p.scale.replace('_', ' ')}</p>
                           <p className="text-xs text-muted-foreground">{p.config.pothos} pothos • {p.config.bamboo} bamboo • {p.config.vetiverMeters}m vetiver</p>
                           <p className="text-xs text-muted-foreground">{p.location.address || `${p.location.lat.toFixed(3)}, ${p.location.lng.toFixed(3)}`}</p>
                         </div>

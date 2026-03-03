@@ -6,8 +6,8 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { 
-  TrendingUp, 
+import {
+  TrendingUp,
   BarChart3,
   Users,
   MapPin,
@@ -35,7 +35,7 @@ const ProgressPage = () => {
       rejectedTotal?: number;
       monthlySeries?: Array<{ month: string; points: number; reports: number }>;
       weeklySeries?: Array<{ week: string; points: number; reports: number }>;
-      recentReports?: Array<{ id: string; status: 'pending'|'approved'|'rejected'; collectorEmail?: string; points: number; submittedAt: string; verificationComment?: string }>
+      recentReports?: Array<{ id: string; status: 'pending' | 'approved' | 'rejected'; collectorEmail?: string; points: number; submittedAt: string; verificationComment?: string }>
     };
     collectors: { activeCollectors: number };
   }>(null);
@@ -144,25 +144,25 @@ const ProgressPage = () => {
     const doc = new jsPDF();
 
     // Fetch fresh data for real-time PDF
-    let liveEmp: { 
-      reports: { 
-        weeklySeries: { week: string; reports: number; points: number }[]; 
+    let liveEmp: {
+      reports: {
+        weeklySeries: { week: string; reports: number; points: number }[];
         monthlySeries: { month: string; reports: number; points: number }[];
         totalReports?: number;
         approvedToday?: number;
         pendingCount?: number;
-      }; 
+      };
       collectors?: unknown;
     } | null = null;
-    let liveCom: { 
-      stats: { 
+    let liveCom: {
+      stats: {
         totalMembers?: number;
         activeToday?: number;
         wasteCollectedKg?: number;
         co2SavedKg?: number;
         totalPoints?: number;
       };
-      leaderboard: { name: string; email: string; points: number }[] 
+      leaderboard: { name: string; email: string; points: number }[]
     } | null = null;
     try {
       const [resEmp, resCom] = await Promise.all([
@@ -173,25 +173,25 @@ const ProgressPage = () => {
       liveCom = await resCom.json();
     } catch (e) {
       // fall back to current state if live fetch fails
-      liveEmp = { 
+      liveEmp = {
         reports: {
           weeklySeries: employeeDash?.reports?.weeklySeries || [],
           monthlySeries: employeeDash?.reports?.monthlySeries || [],
           totalReports: employeeDash?.reports?.totalReports,
           approvedToday: employeeDash?.reports?.approvedToday,
           pendingCount: employeeDash?.reports?.pendingCount
-        }, 
-        collectors: employeeDash?.collectors || {} 
+        },
+        collectors: employeeDash?.collectors || {}
       };
-      liveCom = { 
+      liveCom = {
         stats: {
           totalMembers: community?.stats?.totalMembers,
           activeToday: community?.stats?.activeToday,
           wasteCollectedKg: community?.stats?.wasteCollectedKg,
           co2SavedKg: community?.stats?.co2SavedKg,
           totalPoints: community?.stats?.totalPoints
-        }, 
-        leaderboard: community?.leaderboard || [] 
+        },
+        leaderboard: community?.leaderboard || []
       };
     }
 
@@ -272,7 +272,7 @@ const ProgressPage = () => {
         <div className="max-w-6xl mx-auto space-y-6">
           {/* Header */}
           <div className="bg-gradient-eco rounded-lg p-6 text-white">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
               <div>
                 <h1 className="text-2xl font-bold mb-2">Progress Analytics</h1>
                 <p className="text-white/90">Track waste collection performance and community impact</p>
@@ -384,11 +384,43 @@ const ProgressPage = () => {
           </Card>
 
           <Tabs defaultValue="sectors" className="space-y-6">
-            <TabsList className="grid w-full grid-cols-4">
-              <TabsTrigger value="sectors">Sector Analysis</TabsTrigger>
-              <TabsTrigger value="waste-types">Waste Types</TabsTrigger>
-              <TabsTrigger value="trends">Trends</TabsTrigger>
-              <TabsTrigger value="performers">Top Performers</TabsTrigger>
+            <TabsList
+              className="
+    w-full
+    flex sm:grid
+    sm:grid-cols-4
+    overflow-x-auto sm:overflow-visible
+    gap-2 sm:gap-0
+    justify-start
+  "
+            >
+              <TabsTrigger
+                value="sectors"
+                className="whitespace-nowrap px-4 py-2 text-sm flex-shrink-0"
+              >
+                Sector Analysis
+              </TabsTrigger>
+
+              <TabsTrigger
+                value="waste-types"
+                className="whitespace-nowrap px-4 py-2 text-sm flex-shrink-0"
+              >
+                Waste Types
+              </TabsTrigger>
+
+              <TabsTrigger
+                value="trends"
+                className="whitespace-nowrap px-4 py-2 text-sm flex-shrink-0"
+              >
+                Trends
+              </TabsTrigger>
+
+              <TabsTrigger
+                value="performers"
+                className="whitespace-nowrap px-4 py-2 text-sm flex-shrink-0"
+              >
+                Top Performers
+              </TabsTrigger>
             </TabsList>
 
             <TabsContent value="sectors" className="space-y-6">

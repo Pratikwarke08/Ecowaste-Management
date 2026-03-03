@@ -1023,7 +1023,7 @@ const Settings = () => {
                     </Button>
                   </div>
 
-                  <div className="pt-6 border-t">
+                  {/* <div className="pt-6 border-t">
                     <div className="flex items-center justify-between">
                       <div>
                         <h3 className="font-medium">Account Actions</h3>
@@ -1041,7 +1041,7 @@ const Settings = () => {
                   <div className="text-center text-sm text-muted-foreground">
                     <p>EcoWaste Smart Management System v1.0.0</p>
                     <p>© 2024 Government of India. All rights reserved.</p>
-                  </div>
+                  </div> */}
                 </CardContent>
               </Card>
             </TabsContent>

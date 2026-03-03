@@ -1,71 +1,76 @@
 export type Coordinates = { lat: number; lng: number; accuracy?: number };
 
-const FALLBACK_COORDS: Coordinates = { lat: 20.5937, lng: 78.9629, accuracy: 0 }; // Approximate India centroid
+const FALLBACK_COORDS: Coordinates = { lat: 20.5937, lng: 78.9629, accuracy: 0 };
 
 const GEO_OPTIONS: PositionOptions = {
-  // Allow the browser to choose the best provider (GPS or network) to avoid frequent timeouts
-  enableHighAccuracy: true,
-  timeout: 15000, // Reduced timeout
-  maximumAge: 0,
+  enableHighAccuracy: true, // Crucial: Instructs device to use GPS hardware
+  timeout: 20000,           // Increased: GPS cold-starts can take 10-15s
+  maximumAge: 0,            // Force fresh data, no cached locations
 };
 
 export function getReliableLocation(): Promise<Coordinates> {
   return new Promise((resolve, reject) => {
     if (typeof window === 'undefined' || !('geolocation' in navigator)) {
-      reject(new Error('Geolocation not supported in this environment'));
+      reject(new Error('Geolocation not supported'));
       return;
     }
 
     if (!window.isSecureContext && window.location.hostname !== 'localhost') {
-      reject(new Error('Insecure context: location requires HTTPS or localhost.'));
+      reject(new Error('HTTPS required for high-accuracy location.'));
       return;
     }
 
-    // Use watchPosition to get multiple readings and pick the best one
     let bestPosition: GeolocationPosition | null = null;
     let watchId: number;
-    const maxWaitTime = 5000; // Wait up to 5 seconds for better accuracy
-    const targetAccuracy = 5; // Target accuracy in meters
+
+    // Increased wait time to 10s: GPS hardware often takes ~7s to refine from 100m to <10m
+    const maxWaitTime = 10000;
+    const targetAccuracy = 3; // 3 meters is the realistic "gold standard" for smartphones
 
     const stopWatching = () => {
-      if (watchId) navigator.geolocation.clearWatch(watchId);
+      if (watchId !== undefined) navigator.geolocation.clearWatch(watchId);
     };
+
+    const timeoutId = setTimeout(() => {
+      if (bestPosition) {
+        finish();
+      } else {
+        stopWatching();
+        reject(new Error('Location request timed out without a fix.'));
+      }
+    }, maxWaitTime);
 
     const finish = () => {
       stopWatching();
+      clearTimeout(timeoutId);
       if (bestPosition) {
         resolve({
           lat: bestPosition.coords.latitude,
           lng: bestPosition.coords.longitude,
           accuracy: bestPosition.coords.accuracy
         });
-      } else {
-        reject(new Error('Unable to retrieve location'));
       }
     };
 
-    // Set a timeout to finish if we don't get good enough accuracy
-    const timeoutId = setTimeout(finish, maxWaitTime);
-
     watchId = navigator.geolocation.watchPosition(
       (pos) => {
-        // If this is the first reading or better than previous, keep it
+        // Keep the reading if it's the most accurate one seen so far
         if (!bestPosition || pos.coords.accuracy < bestPosition.coords.accuracy) {
           bestPosition = pos;
         }
 
-        // If accuracy is good enough, stop early
+        // If we hit our high-precision target, resolve immediately
         if (pos.coords.accuracy <= targetAccuracy) {
-          clearTimeout(timeoutId);
           finish();
         }
       },
       (error) => {
-        console.warn('Geolocation partial error:', error);
-        // If we have no position yet and it's a fatal error, reject? 
-        // Or just wait for timeout?
-        // Usually watchPosition calls error callback only if it fails to start or completely fails.
-        // We'll let the timeout handle rejection if no position is found.
+        // If we haven't found any position and the error is terminal
+        if (!bestPosition) {
+          stopWatching();
+          clearTimeout(timeoutId);
+          reject(error);
+        }
       },
       GEO_OPTIONS
     );

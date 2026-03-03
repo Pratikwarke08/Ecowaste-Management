@@ -163,14 +163,14 @@ const Rewards = () => {
       setPaymentStep('processing');
       // Simulate Payment Gateway Delay
       await new Promise(resolve => setTimeout(resolve, 2000));
-      
+
       const amountNumber = Number(withdrawAmount);
       const amountPoints = Math.round(amountNumber * (summary?.conversion.pointsPerRupee || 100));
-      
+
       const res = await apiFetch('/rewards/withdraw', {
         method: 'POST',
-        body: JSON.stringify({ 
-          amountRupees: amountNumber, 
+        body: JSON.stringify({
+          amountRupees: amountNumber,
           amountPoints,
           paymentMethod,
           paymentDetails: paymentMethod === 'upi' ? { upiId } : { accountNumber, ifsc }
@@ -178,13 +178,13 @@ const Rewards = () => {
       });
       const newSummary = await res.json();
       setSummary(newSummary);
-      
+
       setPaymentStep('success');
       toast({
         title: 'Withdrawal Successful',
         description: `₹${amountNumber} has been transferred to your account.`
       });
-      
+
       // Reset after delay
       setTimeout(() => {
         setWithdrawAmount('');
@@ -192,7 +192,7 @@ const Rewards = () => {
         setPaymentStep('input');
         setOtp('');
       }, 3000);
-      
+
     } catch (err) {
       const error = err as Error & { message?: string };
       console.error(error);
@@ -467,10 +467,10 @@ const Rewards = () => {
                           </div>
                           <h3 className="font-semibold text-lg">Verify Transaction</h3>
                           <p className="text-sm text-muted-foreground">
-                            Sending <span className="font-bold text-foreground">₹{withdrawAmount}</span> to<br/>
+                            Sending <span className="font-bold text-foreground">₹{withdrawAmount}</span> to<br />
                             <span className="font-mono">{paymentMethod === 'upi' ? upiId : accountNumber}</span>
                           </p>
-                          
+
                           <div className="space-y-2 text-left max-w-xs mx-auto mt-4">
                             <Label htmlFor="otp">Enter OTP (Simulated: 1234)</Label>
                             <Input

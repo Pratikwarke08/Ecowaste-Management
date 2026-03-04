@@ -182,7 +182,7 @@ const AddDustbin = () => {
           fillLevel: 0,
           lastEmptiedAt: null,
           photoBase64: image,
-          verificationRadius: 1.0,
+          verificationRadius: 10.0,
         })
       });
       toast({

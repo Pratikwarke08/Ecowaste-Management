@@ -19,6 +19,7 @@ const reportSchema = new mongoose.Schema({
   materialType: { type: String },
   verificationComment: { type: String },
   verifiedBy: { type: String },
+  verifiedAt: { type: Date, index: true },
   submittedAt: { type: Date, default: Date.now, index: true },
   aiAnalysis: {
     wasteItems: [{
@@ -40,7 +41,9 @@ const reportSchema = new mongoose.Schema({
       lat: Number,
       lng: Number
     },
-    disposalDistance: Number
+    disposalDistance: Number,
+    verificationThresholdMeters: Number,
+    withinVerificationRange: Boolean
   }
 });
 
@@ -50,5 +53,4 @@ reportSchema.index({ collectorEmail: 1, submittedAt: -1 });
 reportSchema.index({ status: 1, submittedAt: -1 });
 
 export const Report = mongoose.model("Report", reportSchema);
-
 

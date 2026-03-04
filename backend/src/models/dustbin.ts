@@ -21,7 +21,7 @@ const dustbinSchema = new mongoose.Schema({
     updatedAt: Date,
     reportId: { type: mongoose.Schema.Types.ObjectId, ref: "Report" }
   }],
-  verificationRadius: { type: Number, default: 1.0 }, // Verification radius in meters
+  verificationRadius: { type: Number, default: 10.0 }, // Verification radius in meters
   lastEmptiedAt: { type: Date },
   urgent: { type: Boolean, default: false },
   createdBy: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
@@ -41,5 +41,4 @@ dustbinSchema.pre("save", function (next) {
 });
 
 export const Dustbin = mongoose.model("Dustbin", dustbinSchema);
-
 

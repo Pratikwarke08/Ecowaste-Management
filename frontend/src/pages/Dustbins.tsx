@@ -63,6 +63,7 @@ const Dustbins = () => {
     image: string | null;
     error: string | null;
     submittedAt?: string;
+    verifiedAt?: string;
   }>>({});
 
   const [newDustbin, setNewDustbin] = useState({
@@ -313,6 +314,7 @@ const Dustbins = () => {
         image: prev[dustbin._id]?.image || null,
         error: null,
         submittedAt: prev[dustbin._id]?.submittedAt,
+        verifiedAt: prev[dustbin._id]?.verifiedAt,
       },
     }));
 
@@ -327,6 +329,7 @@ const Dustbins = () => {
           image: data?.disposalImageBase64 || null,
           error: null,
           submittedAt: data?.submittedAt,
+          verifiedAt: data?.verifiedAt,
         },
       }));
     } catch (err) {
@@ -334,8 +337,8 @@ const Dustbins = () => {
       const isApiError = apiError instanceof ApiError;
       const isNotFound = isApiError && apiError.status === 404;
       const message = isNotFound
-        ? 'No disposal image has been submitted yet for this dustbin.'
-        : (apiError?.message || 'Unable to load latest disposal image');
+        ? 'No employee-verified disposal image found for this dustbin yet.'
+        : (apiError?.message || 'Unable to load latest verified disposal image');
 
       console.error(apiError);
       setLatestDisposal(prev => ({
@@ -345,6 +348,7 @@ const Dustbins = () => {
           image: prev[dustbin._id]?.image || null,
           error: message,
           submittedAt: prev[dustbin._id]?.submittedAt,
+          verifiedAt: prev[dustbin._id]?.verifiedAt,
         },
       }));
 
@@ -955,7 +959,7 @@ const Dustbins = () => {
 
 
                       {latestDisposal[dustbin._id]?.loading && (
-                        <p className="text-xs text-muted-foreground mt-2">Loading latest disposal image...</p>
+                        <p className="text-xs text-muted-foreground mt-2">Loading latest verified disposal image...</p>
                       )}
                       {latestDisposal[dustbin._id]?.error && !latestDisposal[dustbin._id]?.loading && (
                         <p className="text-xs text-destructive mt-2">{latestDisposal[dustbin._id]?.error}</p>
@@ -963,11 +967,11 @@ const Dustbins = () => {
                       {latestDisposal[dustbin._id]?.image && !latestDisposal[dustbin._id]?.loading && (
                         <div className="mt-4 space-y-1">
                           <p className="text-xs text-muted-foreground">
-                            Most recent disposal image
-                            {latestDisposal[dustbin._id]?.submittedAt && (
+                            Most recent verified disposal image
+                            {(latestDisposal[dustbin._id]?.verifiedAt || latestDisposal[dustbin._id]?.submittedAt) && (
                               <>
                                 {' '}
-                                • {new Date(latestDisposal[dustbin._id]!.submittedAt as string).toLocaleString()}
+                                • {new Date((latestDisposal[dustbin._id]!.verifiedAt || latestDisposal[dustbin._id]!.submittedAt) as string).toLocaleString()}
                               </>
                             )}
                           </p>

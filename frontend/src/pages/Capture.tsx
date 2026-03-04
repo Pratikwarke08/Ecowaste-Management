@@ -157,12 +157,13 @@ const Capture = () => {
     }
     setShowCamera(null);
 
-    // Only capture image here. GPS is fetched explicitly via Get GPS button
-    // to enforce: photo first, then compulsory location.
+    // Capture image and automatically fetch GPS
     if (type === 'pickup') {
       setPickupImage(imageData);
+      setTimeout(() => getCurrentLocation('pickup'), 300);
     } else {
       setDisposalImage(imageData);
+      setTimeout(() => getCurrentLocation('disposal'), 300);
     }
   };
 
@@ -174,10 +175,7 @@ const Capture = () => {
         setPickupLocation(coords);
         setUserLocation(coords);
 
-        if (!pickupImage) {
-          alert('Please capture the pickup photo before recording GPS location.');
-          return;
-        }
+        // Photo was just captured automatically, proceed to next step
         setStep('disposal');
       } else {
         if (!selectedDustbin) {
@@ -195,11 +193,7 @@ const Capture = () => {
         setDisposalLocation(coords);
         setUserLocation(coords);
 
-        if (!disposalImage) {
-          alert('Please capture the disposal photo before recording GPS location.');
-          return;
-        }
-
+        // Photo was just captured automatically, proceed to verification
         setStep('verify');
       }
     } catch (e) {
@@ -415,10 +409,17 @@ const Capture = () => {
                   {!showCamera ? (
                     <div className="space-y-4">
                       {pickupImage ? (
-                        <div className="relative group cursor-pointer" onClick={() => setExpandedImage(pickupImage)}>
-                          <img src={pickupImage} alt="Pickup" className="w-full h-80 object-cover rounded-lg shadow-lg transition-transform group-hover:scale-105" />
-                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center">
-                            <Maximize2 className="h-12 w-12 text-white" />
+                        <div>
+                          <div className="relative group cursor-pointer" onClick={() => setExpandedImage(pickupImage)}>
+                            <img src={pickupImage} alt="Pickup" className="w-full h-80 object-cover rounded-lg shadow-lg transition-transform group-hover:scale-105" />
+                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center">
+                              <Maximize2 className="h-12 w-12 text-white" />
+                            </div>
+                          </div>
+                          <div className="mt-2 rounded-md bg-muted p-2 text-xs">
+                            <p className="font-medium text-foreground">Captured Coordinates</p>
+                            <p>Lat: {pickupLocation?.lat?.toFixed(6) ?? 'Capturing...'}</p>
+                            <p>Lng: {pickupLocation?.lng?.toFixed(6) ?? 'Capturing...'}</p>
                           </div>
                         </div>
                       ) : (
@@ -469,15 +470,7 @@ const Capture = () => {
                     </div>
                   )}
 
-                  <Button
-                    onClick={() => getCurrentLocation('pickup')}
-                    variant="outline"
-                    className="w-full h-14 border-2 border-green-600 text-green-700 hover:bg-green-50"
-                    size="lg"
-                  >
-                    <NavIcon className="mr-2 h-5 w-5" />
-                    Get GPS Location
-                  </Button>
+                  {/* GPS captured automatically after pickup photo */}
                 </CardContent>
               </Card>
 
@@ -534,10 +527,17 @@ const Capture = () => {
                   {!showCamera ? (
                     <div className="space-y-4">
                       {disposalImage ? (
-                        <div className="relative group cursor-pointer" onClick={() => setExpandedImage(disposalImage)}>
-                          <img src={disposalImage} alt="Disposal" className="w-full h-80 object-cover rounded-lg shadow-lg transition-transform group-hover:scale-105" />
-                          <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center">
-                            <Maximize2 className="h-12 w-12 text-white" />
+                        <div>
+                          <div className="relative group cursor-pointer" onClick={() => setExpandedImage(disposalImage)}>
+                            <img src={disposalImage} alt="Disposal" className="w-full h-80 object-cover rounded-lg shadow-lg transition-transform group-hover:scale-105" />
+                            <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg flex items-center justify-center">
+                              <Maximize2 className="h-12 w-12 text-white" />
+                            </div>
+                          </div>
+                          <div className="mt-2 rounded-md bg-muted p-2 text-xs">
+                            <p className="font-medium text-foreground">Captured Coordinates</p>
+                            <p>Lat: {disposalLocation?.lat?.toFixed(6) ?? 'Capturing...'}</p>
+                            <p>Lng: {disposalLocation?.lng?.toFixed(6) ?? 'Capturing...'}</p>
                           </div>
                         </div>
                       ) : (
@@ -588,15 +588,7 @@ const Capture = () => {
                     </div>
                   )}
 
-                  <Button
-                    onClick={() => getCurrentLocation('disposal')}
-                    variant="outline"
-                    className="w-full h-14 border-2 border-blue-600 text-blue-700 hover:bg-blue-50"
-                    size="lg"
-                  >
-                    <NavIcon className="mr-2 h-5 w-5" />
-                    Get GPS Location
-                  </Button>
+                  {/* GPS captured automatically after disposal photo */}
                 </CardContent>
               </Card>
 

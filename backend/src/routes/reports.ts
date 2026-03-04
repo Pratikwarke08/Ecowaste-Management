@@ -2,9 +2,32 @@ import express from "express";
 import { Report } from "../models/report";
 import { Dustbin } from "../models/dustbin";
 import { authenticate, AuthenticatedRequest } from "../middleware/auth";
+import fs from "fs";
+import os from "os";
+import path from "path";
+import { spawnSync } from "child_process";
 
 const router = express.Router();
 const POINTS_PER_KG = Number(process.env.POINTS_PER_KG || "10");
+const DUSTBIN_VERIFICATION_DISTANCE_METERS = 10;
+const PROJECT_ROOT = path.resolve(__dirname, "../../..");
+const BACKEND_ROOT = path.resolve(__dirname, "../..");
+
+function resolvePythonBinary() {
+  const envPython = process.env.AI_PYTHON_PATH;
+  if (envPython && fs.existsSync(envPython)) {
+    return envPython;
+  }
+
+  const candidates = [
+    path.join(PROJECT_ROOT, ".venv", "bin", "python3"),
+    path.join(BACKEND_ROOT, ".venv", "bin", "python3"),
+    "python3"
+  ];
+
+  const found = candidates.find((candidate) => candidate === "python3" || fs.existsSync(candidate));
+  return found || "python3";
+}
 
 function inferWeightFromPoints(points: number) {
   if (!points || POINTS_PER_KG <= 0) return 0;
@@ -37,6 +60,61 @@ function getDistanceMeters(
   return R * c;
 }
 
+// Run YOLO model using the Python script and return detected waste + points
+function runAIDetection(imageBase64: string) {
+  let tempImagePath: string | null = null;
+  try {
+    if (!imageBase64) return null;
+
+    const base64 = imageBase64.includes(",") ? imageBase64.split(",")[1] : imageBase64;
+
+    tempImagePath = path.join(os.tmpdir(), `waste_${Date.now()}.jpg`);
+    fs.writeFileSync(tempImagePath, Buffer.from(base64, "base64"));
+
+    const scriptPath = path.resolve(__dirname, "../../model/detect_waste.py");
+
+    const pythonBinary = resolvePythonBinary();
+    const result = spawnSync(pythonBinary, [scriptPath, tempImagePath], {
+      encoding: "utf-8"
+    });
+
+    if (result.error) {
+      console.error("AI detection error:", result.error);
+      return null;
+    }
+    if (result.status !== 0) {
+      console.error(`AI detection failed (python: ${pythonBinary}):`, result.stderr || `Exit code ${result.status}`);
+      return null;
+    }
+
+    if (!result.stdout) return null;
+
+    const trimmedOutput = result.stdout.trim();
+    try {
+      return JSON.parse(trimmedOutput);
+    } catch {
+      const lastLine = trimmedOutput.split("\n").pop() || "";
+      try {
+        return JSON.parse(lastLine);
+      } catch {
+        console.error("AI detection parse failed:", result.stdout);
+        return null;
+      }
+    }
+  } catch (err) {
+    console.error("AI detection failed:", err);
+    return null;
+  } finally {
+    if (tempImagePath && fs.existsSync(tempImagePath)) {
+      try {
+        fs.unlinkSync(tempImagePath);
+      } catch {
+        // Best effort cleanup for temp image
+      }
+    }
+  }
+}
+
 // ML integration removed; reports will be manually reviewed.
 
 // Create a report
@@ -50,7 +128,16 @@ router.post("/", authenticate, async (req: AuthenticatedRequest, res) => {
     // Manual workflow: store report and compute disposal → dustbin distance if a dustbin is linked
     const collectorEmail = req.authUser?.email || req.body.collectorEmail;
 
-    let aiAnalysis: any = undefined;
+    let aiAnalysis: any = {};
+
+    // Run AI model on pickup image to estimate waste and points
+    const aiResult = runAIDetection(pickupImageBase64);
+
+    if (aiResult) {
+      aiAnalysis.wasteItems = Array.isArray(aiResult.wasteItems) ? aiResult.wasteItems : [];
+      aiAnalysis.totalPoints = typeof aiResult.totalPoints === "number" ? aiResult.totalPoints : 0;
+      aiAnalysis.confidenceMet = Boolean(aiResult.confidenceMet);
+    }
 
     if (dustbinId) {
       try {
@@ -65,14 +152,14 @@ router.post("/", authenticate, async (req: AuthenticatedRequest, res) => {
           );
 
           if (distance !== null) {
-            aiAnalysis = {
-              disposalDistance: distance,
-              nearestDustbin: {
-                _id: dustbin._id,
-                name: dustbin.name,
-                lat: dustbin.coordinates.lat,
-                lng: dustbin.coordinates.lng
-              }
+            aiAnalysis.disposalDistance = distance;
+            aiAnalysis.verificationThresholdMeters = DUSTBIN_VERIFICATION_DISTANCE_METERS;
+            aiAnalysis.withinVerificationRange = distance <= DUSTBIN_VERIFICATION_DISTANCE_METERS;
+            aiAnalysis.nearestDustbin = {
+              _id: dustbin._id,
+              name: dustbin.name,
+              lat: dustbin.coordinates.lat,
+              lng: dustbin.coordinates.lng
             };
           }
         }
@@ -90,13 +177,13 @@ router.post("/", authenticate, async (req: AuthenticatedRequest, res) => {
       status: "pending",
       collectorEmail,
       collectorId: req.authUser?._id,
-      points: 0,
+      points: aiAnalysis?.totalPoints || 0,
       wasteWeightKg: typeof wasteWeightKg === "number" ? wasteWeightKg : 0,
       materialType: materialType || undefined,
       aiAnalysis
     });
 
-    return res.json({ id: report._id, points: 0 });
+    return res.json({ id: report._id, points: aiAnalysis?.totalPoints || 0 });
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: "Failed to create report" });
@@ -130,7 +217,7 @@ router.get("/", authenticate, async (req: AuthenticatedRequest, res) => {
       ]);
       return res.json({ reports, total, page, limit, totalPages: Math.ceil(total / limit) });
     }
-    
+
     const [reports, total] = await Promise.all([
       Report.find()
         .select(selectFields)
@@ -153,11 +240,11 @@ router.get("/latest-disposal-image", authenticate, async (req: AuthenticatedRequ
     if (!dustbinId || typeof dustbinId !== "string") {
       return res.status(400).json({ error: "dustbinId query parameter is required" });
     }
-    const query: any = { dustbinId };
+    const query: any = { dustbinId, status: "approved" };
 
     const report = await Report.findOne(query)
-      .sort({ submittedAt: -1 })
-      .select("disposalImageBase64 submittedAt aiAnalysis.nearestDustbin dustbinId")
+      .sort({ verifiedAt: -1, submittedAt: -1 })
+      .select("disposalImageBase64 submittedAt verifiedAt aiAnalysis.nearestDustbin dustbinId")
       .lean();
 
     if (!report) {
@@ -167,6 +254,7 @@ router.get("/latest-disposal-image", authenticate, async (req: AuthenticatedRequ
     return res.json({
       disposalImageBase64: report.disposalImageBase64,
       submittedAt: report.submittedAt,
+      verifiedAt: (report as any).verifiedAt,
       nearestDustbin: report.aiAnalysis?.nearestDustbin || null
     });
   } catch (err) {
@@ -210,6 +298,9 @@ router.patch("/:id", authenticate, async (req: AuthenticatedRequest, res) => {
     if (verifiedBy !== undefined) {
       report.verifiedBy = verifiedBy;
     }
+    if (status === "approved") {
+      (report as any).verifiedAt = new Date();
+    }
     await report.save();
 
     if (status === "approved" && report.dustbinId) {
@@ -223,14 +314,14 @@ router.patch("/:id", authenticate, async (req: AuthenticatedRequest, res) => {
           });
         }
         dustbin.photoBase64 = report.disposalImageBase64;
-        
+
         // Keep reasonable history size
         if (dustbin.photoHistory.length > 20) {
           // Remove oldest entries to keep only the last 20
           const removeCount = dustbin.photoHistory.length - 20;
           dustbin.photoHistory.splice(0, removeCount);
         }
-        
+
         await dustbin.save();
       }
     }
@@ -243,4 +334,3 @@ router.patch("/:id", authenticate, async (req: AuthenticatedRequest, res) => {
 });
 
 export default router;
-

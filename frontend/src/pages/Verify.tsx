@@ -45,7 +45,17 @@ type Report = {
   verificationComment?: string;
   verifiedBy?: string;
   aiAnalysis?: {
+    wasteItems?: {
+      class_name: string;
+      confidence: number;
+      bbox: number[];
+      points: number;
+    }[];
+    totalPoints?: number;
+    confidenceMet?: boolean;
     disposalDistance?: number;
+    verificationThresholdMeters?: number;
+    withinVerificationRange?: boolean;
     nearestDustbin?: {
       _id?: string;
       name?: string;
@@ -95,6 +105,7 @@ const Verify = () => {
   const [reports, setReports] = useState<Report[]>([]);
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerSrc, setViewerSrc] = useState<string | null>(null);
+  const [latestVerifiedDisposalImage, setLatestVerifiedDisposalImage] = useState<string | null>(null);
 
   const openViewer = (src: string) => {
     setViewerSrc(src);
@@ -125,6 +136,25 @@ const Verify = () => {
     };
     fetchDustbin();
   }, [selectedReport]);
+
+  useEffect(() => {
+    if (!selectedReport?.dustbinId) {
+      setLatestVerifiedDisposalImage(null);
+      return;
+    }
+
+    const fetchLatestVerifiedDisposal = async () => {
+      try {
+        const res = await apiFetch(`/reports/latest-disposal-image?dustbinId=${selectedReport.dustbinId}`);
+        const data = await res.json();
+        setLatestVerifiedDisposalImage(data?.disposalImageBase64 || null);
+      } catch {
+        setLatestVerifiedDisposalImage(null);
+      }
+    };
+
+    fetchLatestVerifiedDisposal();
+  }, [selectedReport?.dustbinId]);
 
   const getDistanceMeters = (
     a?: { lat: number; lng: number },
@@ -180,6 +210,20 @@ const Verify = () => {
     if (filterStatus === 'all') return true;
     return report.status === filterStatus;
   });
+  const selectedThreshold =
+    selectedReport?.aiAnalysis?.verificationThresholdMeters ||
+    dustbinData?.verificationRadius ||
+    10;
+  const selectedDistance = selectedReport?.aiAnalysis?.disposalDistance;
+  const selectedWithinRange =
+    typeof selectedReport?.aiAnalysis?.withinVerificationRange === 'boolean'
+      ? selectedReport.aiAnalysis.withinVerificationRange
+      : typeof selectedDistance === 'number'
+        ? selectedDistance <= selectedThreshold
+        : false;
+  const selectedWasteItems = selectedReport?.aiAnalysis?.wasteItems || [];
+  const selectedAiTotalPoints = selectedReport?.aiAnalysis?.totalPoints || 0;
+  const selectedAiDetectedCount = selectedWasteItems.length;
 
   const getStatusBadge = (status: ReportStatus) => {
     switch (status) {
@@ -500,6 +544,23 @@ const Verify = () => {
                               </div>
                             )}
 
+                            {typeof report.aiAnalysis?.totalPoints === 'number' && (
+                              <div className="flex justify-between text-xs">
+                                <span>AI Suggested Points:</span>
+                                <Badge variant="outline">+{report.aiAnalysis.totalPoints}</Badge>
+                              </div>
+                            )}
+
+                            {report.aiAnalysis?.wasteItems && report.aiAnalysis.wasteItems.length > 0 && (
+                              <div className="flex flex-wrap gap-1">
+                                {report.aiAnalysis.wasteItems.slice(0, 3).map((item, idx) => (
+                                  <Badge key={`${item.class_name}-${idx}`} variant="secondary" className="text-[10px]">
+                                    {item.class_name}
+                                  </Badge>
+                                ))}
+                              </div>
+                            )}
+
                             {report.status === 'approved' && (
                               <div className="flex justify-between text-sm">
                                 <span>Points Awarded:</span>
@@ -584,26 +645,26 @@ const Verify = () => {
                     <div className="bg-muted/30 p-4 rounded-lg border">
                       <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
                         <MapPin className="h-4 w-4" />
-                        Distance Verification (1m Precision)
+                        Distance Verification (10m Rule)
                       </h3>
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                         <div className="space-y-1">
                           <p className="text-xs text-muted-foreground">Calculated Distance</p>
                           <div className="flex items-baseline gap-2">
-                            <span className={`text-2xl font-bold ${(selectedReport.aiAnalysis?.disposalDistance || 0) <= 1
+                            <span className={`text-2xl font-bold ${selectedWithinRange
                               ? 'text-eco-success'
                               : 'text-destructive'
                               }`}>
-                              {selectedReport.aiAnalysis?.disposalDistance?.toFixed(2) || 'N/A'}m
+                              {typeof selectedDistance === 'number' ? `${selectedDistance.toFixed(2)}m` : 'N/A'}
                             </span>
                           </div>
-                          <div className={`text-xs font-medium px-2 py-1 rounded inline-block ${(selectedReport.aiAnalysis?.disposalDistance || 0) <= 1
+                          <div className={`text-xs font-medium px-2 py-1 rounded inline-block ${selectedWithinRange
                             ? 'bg-eco-success/10 text-eco-success'
                             : 'bg-destructive/10 text-destructive'
                             }`}>
-                            {(selectedReport.aiAnalysis?.disposalDistance || 0) <= 1
-                              ? '✓ Within Range (≤ 1m)'
-                              : '⚠ Out of Range (> 1m)'}
+                            {selectedWithinRange
+                              ? `✓ Within Range (≤ ${selectedThreshold}m)`
+                              : `⚠ Out of Range (> ${selectedThreshold}m)`}
                           </div>
                         </div>
                         <div className="space-y-2 text-xs overflow-hidden">
@@ -644,6 +705,45 @@ const Verify = () => {
                             </span>
                           </div>
                         </div>
+                      </div>
+                    </div>
+
+                    {/* AI Waste Detection */}
+                    <div className="bg-muted/30 p-4 rounded-lg border">
+                      <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
+                        <Shield className="h-4 w-4" />
+                        AI Waste Detection
+                      </h3>
+
+                      {selectedWasteItems.length > 0 ? (
+                        <div className="space-y-2 text-sm">
+                          {selectedWasteItems.map((item, idx) => (
+                            <div key={idx} className="flex justify-between items-center">
+                              <span className="font-medium">{item.class_name}</span>
+                              <div className="flex items-center gap-3">
+                                <span className="text-xs text-muted-foreground">
+                                  {(item.confidence * 100).toFixed(1)}%
+                                </span>
+                                <Badge variant="outline">+{item.points}</Badge>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      ) : (
+                        <p className="text-sm text-muted-foreground">
+                          No waste type detected by AI for this pickup image.
+                        </p>
+                      )}
+
+                      <div className="flex justify-between items-center mt-3 pt-3 border-t">
+                        <span className="text-sm font-medium">Detected Types</span>
+                        <Badge variant="secondary">{selectedAiDetectedCount}</Badge>
+                      </div>
+                      <div className="flex justify-between items-center mt-2">
+                        <span className="text-sm font-medium">AI Suggested Points</span>
+                        <Badge className="bg-eco-success/10 text-eco-success">
+                          {selectedAiTotalPoints}
+                        </Badge>
                       </div>
                     </div>
 
@@ -698,13 +798,13 @@ const Verify = () => {
                         <div className="space-y-2 w-full">
                           <div className="flex justify-between items-center">
                             <span className="text-xs font-medium">Latest Verified</span>
-                            <Badge variant="outline" className="text-[10px]">Before Report</Badge>
+                            <Badge variant="outline" className="text-[10px]">Most Recent Approved</Badge>
                           </div>
                           <div className="w-full bg-muted rounded-lg overflow-hidden border relative">
-                            {dustbinData?.photoBase64 ? (
+                            {latestVerifiedDisposalImage ? (
                               <>
                                 <img
-                                  src={dustbinData.photoBase64.startsWith('data:') ? dustbinData.photoBase64 : `data:image/png;base64,${dustbinData.photoBase64}`}
+                                  src={latestVerifiedDisposalImage.startsWith('data:') ? latestVerifiedDisposalImage : `data:image/png;base64,${latestVerifiedDisposalImage}`}
                                   alt="Previous State"
                                   className="w-full h-auto object-contain bg-black"
                                 />
@@ -714,9 +814,9 @@ const Verify = () => {
                                     size="sm"
                                     onClick={() =>
                                       openViewer(
-                                        dustbinData.photoBase64.startsWith('http') || dustbinData.photoBase64.startsWith('data:')
-                                          ? dustbinData.photoBase64
-                                          : `data:image/png;base64,${dustbinData.photoBase64}`
+                                        latestVerifiedDisposalImage.startsWith('http') || latestVerifiedDisposalImage.startsWith('data:')
+                                          ? latestVerifiedDisposalImage
+                                          : `data:image/png;base64,${latestVerifiedDisposalImage}`
                                       )
                                     }
                                     className="flex items-center gap-1"
@@ -728,7 +828,7 @@ const Verify = () => {
                               </>
                             ) : (
                               <div className="flex items-center justify-center h-full text-muted-foreground text-xs">
-                                No previous photo
+                                No verified disposal image yet
                               </div>
                             )}
                           </div>

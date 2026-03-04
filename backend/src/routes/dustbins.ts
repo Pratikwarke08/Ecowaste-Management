@@ -61,7 +61,7 @@ router.post("/", authenticate, async (req: AuthenticatedRequest, res) => {
       lastEmptiedAt,
       photoBase64,
       initialPhotoBase64: photoBase64, // Set initial photo same as current on creation
-      verificationRadius: verificationRadius || 1.0,
+      verificationRadius: verificationRadius || 10.0,
       createdBy: req.authUser._id,
       updatedBy: req.authUser._id
     });
@@ -118,5 +118,4 @@ router.patch("/:id", authenticate, async (req: AuthenticatedRequest, res) => {
 });
 
 export default router;
-
 

@@ -437,24 +437,26 @@ const Capture = () => {
                       )}
                     </div>
                   ) : (
-                    <div className="space-y-4">
-                      <div className="relative">
-                        <video
-                          ref={videoRef}
-                          className="w-full h-80 object-cover rounded-lg shadow-lg"
-                          autoPlay
-                        />
-                        <canvas ref={canvasRef} style={{ display: 'none' }} />
-                      </div>
-                      <div className="flex gap-2">
+                    <div className="fixed inset-0 z-50 bg-black flex items-center justify-center">
+                      <video
+                        ref={videoRef}
+                        autoPlay
+                        playsInline
+                        className="w-full h-full object-cover"
+                      />
+
+                      <canvas ref={canvasRef} style={{ display: 'none' }} />
+
+                      <div className="absolute bottom-10 flex gap-4">
                         <Button
                           onClick={() => capturePhoto('pickup')}
-                          className="flex-1 bg-green-600 hover:bg-green-700 h-14 text-lg"
+                          className="px-6 py-3 text-lg bg-green-600 hover:bg-green-700"
                           size="lg"
                         >
                           <Camera className="mr-2 h-5 w-5" />
-                          Capture Now
+                          Capture
                         </Button>
+
                         <Button
                           onClick={() => {
                             const stream = videoRef.current?.srcObject as MediaStream;
@@ -462,9 +464,9 @@ const Capture = () => {
                             setShowCamera(null);
                           }}
                           variant="outline"
-                          size="lg"
+                          className="px-6 py-3 text-lg text-white border-white"
                         >
-                          <X className="h-5 w-5" />
+                          Cancel
                         </Button>
                       </div>
                     </div>
@@ -555,24 +557,26 @@ const Capture = () => {
                       )}
                     </div>
                   ) : (
-                    <div className="space-y-4">
-                      <div className="relative">
-                        <video
-                          ref={videoRef}
-                          className="w-full h-80 object-cover rounded-lg shadow-lg"
-                          autoPlay
-                        />
-                        <canvas ref={canvasRef} style={{ display: 'none' }} />
-                      </div>
-                      <div className="flex gap-2">
+                    <div className="fixed inset-0 z-50 bg-black flex items-center justify-center">
+                      <video
+                        ref={videoRef}
+                        autoPlay
+                        playsInline
+                        className="w-full h-full object-cover"
+                      />
+
+                      <canvas ref={canvasRef} style={{ display: 'none' }} />
+
+                      <div className="absolute bottom-10 flex gap-4">
                         <Button
                           onClick={() => capturePhoto('disposal')}
-                          className="flex-1 bg-blue-600 hover:bg-blue-700 h-14 text-lg"
+                          className="px-6 py-3 text-lg bg-blue-600 hover:bg-blue-700"
                           size="lg"
                         >
                           <Camera className="mr-2 h-5 w-5" />
-                          Capture Now
+                          Capture
                         </Button>
+
                         <Button
                           onClick={() => {
                             const stream = videoRef.current?.srcObject as MediaStream;
@@ -580,9 +584,9 @@ const Capture = () => {
                             setShowCamera(null);
                           }}
                           variant="outline"
-                          size="lg"
+                          className="px-6 py-3 text-lg text-white border-white"
                         >
-                          <X className="h-5 w-5" />
+                          Cancel
                         </Button>
                       </div>
                     </div>

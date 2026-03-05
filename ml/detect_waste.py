@@ -17,12 +17,26 @@ POINTS = {
     "RecyclebleWaste": 10
 }
 
+# Approximate per-item weights in grams (min, max).
+# RecyclebleWaste includes items such as plastic bottles.
+WEIGHT_GRAMS_RANGE = {
+    "ConstructionWaste": (500, 5000),
+    "GeneralWaste": (100, 1000),
+    "GreenWaste": (50, 500),
+    "HazardousWaste": (200, 1500),
+    "MedicalWaste": (50, 500),
+    "OrganicWaste": (80, 600),
+    "RecyclebleWaste": (50, 100)
+}
+
 
 def detect_waste(image_path):
     results = model(image_path, conf=0.25, verbose=False)
 
     waste_items = []
     total_points = 0
+    estimated_min_weight_grams = 0
+    estimated_max_weight_grams = 0
 
     for r in results:
         boxes = r.boxes
@@ -39,17 +53,29 @@ def detect_waste(image_path):
             item_points = POINTS.get(class_name, 0)
             total_points += item_points
 
+            min_w, max_w = WEIGHT_GRAMS_RANGE.get(class_name, (100, 800))
+            estimated_min_weight_grams += min_w
+            estimated_max_weight_grams += max_w
+
             waste_items.append({
                 "class_name": class_name,
                 "confidence": confidence,
                 "bbox": bbox,
-                "points": item_points
+                "points": item_points,
+                "estimatedWeightRangeGrams": {
+                    "min": min_w,
+                    "max": max_w
+                }
             })
 
     return {
         "wasteItems": waste_items,
         "totalPoints": total_points,
-        "confidenceMet": len(waste_items) > 0
+        "confidenceMet": len(waste_items) > 0,
+        "estimatedWeightRangeGrams": {
+            "min": estimated_min_weight_grams,
+            "max": estimated_max_weight_grams
+        }
     }
 
 

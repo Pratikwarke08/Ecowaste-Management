@@ -26,6 +26,8 @@ import {
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 
+const VIRTUAL_DUSTBIN_URL = import.meta.env.VITE_VIRTUAL_DUSTBIN_URL || 'http://localhost:5174';
+
 type ReportStatus = 'pending' | 'approved' | 'rejected';
 
 type Report = {
@@ -42,6 +44,17 @@ type Report = {
   collectorEmail?: string;
   submittedAt: string;
   points?: number;
+  dustbinSignals?: {
+    beforeImageBase64?: string;
+    afterImageBase64?: string;
+    weightBeforeKg?: number;
+    weightAfterKg?: number;
+    depthBefore?: number;
+    depthAfter?: number;
+    depthUnit?: 'meter' | 'percent';
+    source?: string;
+    submittedAt?: string;
+  };
   verificationComment?: string;
   verifiedBy?: string;
   aiAnalysis?: {
@@ -61,6 +74,24 @@ type Report = {
       name?: string;
       lat?: number;
       lng?: number;
+    };
+    estimatedWeightRangeGrams?: {
+      min?: number;
+      max?: number;
+    };
+    genuinity?: {
+      isGenuine?: boolean;
+      confidenceScore?: number;
+      reasons?: string[];
+      observed?: {
+        weightDeltaGrams?: number;
+        depthBeforePercentage?: number;
+        depthAfterPercentage?: number;
+        depthDeltaPercentage?: number;
+        imageItemCountBefore?: number;
+        imageItemCountAfter?: number;
+        imageItemCountDelta?: number;
+      };
     };
   };
 };
@@ -110,6 +141,12 @@ const Verify = () => {
   const openViewer = (src: string) => {
     setViewerSrc(src);
     setViewerOpen(true);
+  };
+
+  const openVirtualDustbin = (reportId?: string) => {
+    if (!reportId) return;
+    const targetUrl = `${VIRTUAL_DUSTBIN_URL.replace(/\/$/, '')}?reportId=${encodeURIComponent(reportId)}`;
+    window.open(targetUrl, '_blank', 'noopener,noreferrer');
   };
 
   // Fetch linked dustbin data when a report is selected
@@ -224,6 +261,8 @@ const Verify = () => {
   const selectedWasteItems = selectedReport?.aiAnalysis?.wasteItems || [];
   const selectedAiTotalPoints = selectedReport?.aiAnalysis?.totalPoints || 0;
   const selectedAiDetectedCount = selectedWasteItems.length;
+  const selectedGenuinity = selectedReport?.aiAnalysis?.genuinity;
+  const selectedObserved = selectedGenuinity?.observed;
 
   const getStatusBadge = (status: ReportStatus) => {
     switch (status) {
@@ -551,6 +590,18 @@ const Verify = () => {
                               </div>
                             )}
 
+                            {typeof report.aiAnalysis?.genuinity?.isGenuine === 'boolean' && (
+                              <div className="flex justify-between text-xs">
+                                <span>ML Genuinity:</span>
+                                <Badge
+                                  variant={report.aiAnalysis.genuinity.isGenuine ? 'default' : 'destructive'}
+                                  className={report.aiAnalysis.genuinity.isGenuine ? 'bg-eco-success/10 text-eco-success' : ''}
+                                >
+                                  {report.aiAnalysis.genuinity.isGenuine ? 'Genuine' : 'Flagged'}
+                                </Badge>
+                              </div>
+                            )}
+
                             {report.aiAnalysis?.wasteItems && report.aiAnalysis.wasteItems.length > 0 && (
                               <div className="flex flex-wrap gap-1">
                                 {report.aiAnalysis.wasteItems.slice(0, 3).map((item, idx) => (
@@ -747,6 +798,57 @@ const Verify = () => {
                       </div>
                     </div>
 
+                    {/* Dustbin Signal + Genuinity */}
+                    <div className="bg-muted/30 p-4 rounded-lg border space-y-3">
+                      <h3 className="text-sm font-semibold flex items-center gap-2">
+                        <Shield className="h-4 w-4" />
+                        Dustbin Signal Verification
+                      </h3>
+
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                        <div className="p-3 rounded border bg-background/60">
+                          <p className="text-muted-foreground">Weight (kg)</p>
+                          <p className="font-medium">
+                            {selectedReport?.dustbinSignals?.weightBeforeKg ?? 0} → {selectedReport?.dustbinSignals?.weightAfterKg ?? 0}
+                          </p>
+                          <p className="text-muted-foreground mt-1">
+                            Delta: {typeof selectedObserved?.weightDeltaGrams === 'number' ? `${selectedObserved.weightDeltaGrams.toFixed(2)} g` : 'N/A'}
+                          </p>
+                        </div>
+                        <div className="p-3 rounded border bg-background/60">
+                          <p className="text-muted-foreground">Depth ({selectedReport?.dustbinSignals?.depthUnit === 'percent' ? '%' : 'meter'})</p>
+                          <p className="font-medium">
+                            {selectedReport?.dustbinSignals?.depthBefore ?? 0} → {selectedReport?.dustbinSignals?.depthAfter ?? 0}
+                          </p>
+                          <p className="text-muted-foreground mt-1">
+                            Delta: {typeof selectedObserved?.depthDeltaPercentage === 'number' ? `${selectedObserved.depthDeltaPercentage.toFixed(2)}%` : 'N/A'}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center justify-between gap-3 p-3 rounded border bg-background/60">
+                        <div>
+                          <p className="text-xs text-muted-foreground">ML Genuinity</p>
+                          <p className={`text-sm font-semibold ${selectedGenuinity?.isGenuine ? 'text-eco-success' : 'text-destructive'}`}>
+                            {selectedGenuinity?.isGenuine ? 'Genuine Report' : 'Flagged Report'}
+                          </p>
+                        </div>
+                        <Badge variant={selectedGenuinity?.isGenuine ? 'default' : 'destructive'}>
+                          {selectedGenuinity?.confidenceScore ?? 0}%
+                        </Badge>
+                      </div>
+
+                      {selectedGenuinity?.reasons && selectedGenuinity.reasons.length > 0 && (
+                        <div className="space-y-1 text-xs">
+                          {selectedGenuinity.reasons.map((reason, idx) => (
+                            <p key={`${reason}-${idx}`} className="text-destructive">
+                              • {reason}
+                            </p>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
                     {/* Image History Comparison */}
                     <div>
                       <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
@@ -870,6 +972,76 @@ const Verify = () => {
                         {/* 3. Pickup Image */}
                         <div className="space-y-2 w-full">
                           <div className="flex justify-between items-center">
+                            <span className="text-xs font-medium">Dustbin Before (Virtual)</span>
+                            <Badge variant="outline" className="text-[10px]">Before Disposal</Badge>
+                          </div>
+                          <div className="w-full bg-muted rounded-lg overflow-hidden border relative">
+                            {selectedReport.dustbinSignals?.beforeImageBase64 ? (
+                              (() => {
+                                const img = selectedReport.dustbinSignals?.beforeImageBase64 || '';
+                                const src = (img.startsWith('http') || img.startsWith('data:')) ? img : `data:image/png;base64,${img}`;
+                                return (
+                                  <>
+                                    <img
+                                      src={src}
+                                      alt="Dustbin Before"
+                                      className="w-full h-auto object-contain bg-black"
+                                    />
+                                    <div className="flex justify-end mt-2">
+                                      <Button variant="outline" size="sm" onClick={() => openViewer(src)} className="flex items-center gap-1">
+                                        <Eye className="h-4 w-4" />
+                                        Maximize
+                                      </Button>
+                                    </div>
+                                  </>
+                                );
+                              })()
+                            ) : (
+                              <div className="flex items-center justify-center h-full text-muted-foreground text-xs">
+                                No virtual dustbin before image
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* 4. Dustbin After Image */}
+                        <div className="space-y-2 w-full">
+                          <div className="flex justify-between items-center">
+                            <span className="text-xs font-medium">Dustbin After (Virtual)</span>
+                            <Badge variant="outline" className="text-[10px]">After Disposal</Badge>
+                          </div>
+                          <div className="w-full bg-muted rounded-lg overflow-hidden border relative">
+                            {selectedReport.dustbinSignals?.afterImageBase64 ? (
+                              (() => {
+                                const img = selectedReport.dustbinSignals?.afterImageBase64 || '';
+                                const src = (img.startsWith('http') || img.startsWith('data:')) ? img : `data:image/png;base64,${img}`;
+                                return (
+                                  <>
+                                    <img
+                                      src={src}
+                                      alt="Dustbin After"
+                                      className="w-full h-auto object-contain bg-black"
+                                    />
+                                    <div className="flex justify-end mt-2">
+                                      <Button variant="outline" size="sm" onClick={() => openViewer(src)} className="flex items-center gap-1">
+                                        <Eye className="h-4 w-4" />
+                                        Maximize
+                                      </Button>
+                                    </div>
+                                  </>
+                                );
+                              })()
+                            ) : (
+                              <div className="flex items-center justify-center h-full text-muted-foreground text-xs">
+                                No virtual dustbin after image
+                              </div>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* 5. Pickup Image */}
+                        <div className="space-y-2 w-full">
+                          <div className="flex justify-between items-center">
                             <span className="text-xs font-medium">Pickup Image</span>
                             <Badge variant="secondary" className="text-[10px]">Collection</Badge>
                           </div>
@@ -895,6 +1067,14 @@ const Verify = () => {
                                         <Eye className="h-4 w-4" />
                                         Maximize
                                       </Button>
+                                      <Button
+                                        variant="outline"
+                                        size="sm"
+                                        onClick={() => openVirtualDustbin(selectedReport._id || selectedReport.id)}
+                                        className="flex items-center gap-1 ml-2"
+                                      >
+                                        Request Virtual Dustbin
+                                      </Button>
                                     </div>
                                   </>
                                 );
@@ -907,7 +1087,7 @@ const Verify = () => {
                           </div>
                         </div>
 
-                        {/* 4. Disposal Image (Report Image) */}
+                        {/* 6. Disposal Image (Report Image) */}
                         <div className="space-y-2 w-full">
                           <div className="flex justify-between items-center">
                             <span className="text-xs font-medium">Disposal Image</span>

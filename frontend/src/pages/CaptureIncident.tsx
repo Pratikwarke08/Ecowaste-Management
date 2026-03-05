@@ -38,6 +38,7 @@ export default function CaptureIncident() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [image, setImage] = useState<string | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
   const [location, setLocation] = useState<{ lat: number; lng: number } | null>(null);
   const [locationLoading, setLocationLoading] = useState(false);
   const [showCamera, setShowCamera] = useState(false);
@@ -237,19 +238,40 @@ export default function CaptureIncident() {
                     )}
 
                     {showCamera && (
-                      <div className="flex flex-col items-center w-full">
-                        <video ref={videoRef} width={320} height={192} autoPlay playsInline style={{ background: '#000', borderRadius: 8, width: '100%', height: '12rem', objectFit: 'cover', zIndex: 2 }} />
-                        <canvas ref={canvasRef} width={320} height={192} style={{ display: 'none' }} />
-                        <Button onClick={capturePhoto} variant="eco" className="w-full mt-2">
-                          <Camera className="mr-2 h-4 w-4" />
-                          Take Photo{!manualMode && ' & Get Location'}
-                        </Button>
-                        <Button onClick={stopCamera} variant="ghost" className="w-full mt-2">Cancel</Button>
-                      </div>
+                      <div className="fixed inset-0 z-50 bg-black flex items-center justify-center">
+                        <video
+                          ref={videoRef}
+                          autoPlay
+                          playsInline
+                          className="w-full h-full object-cover"
+                        />
+
+                        <canvas ref={canvasRef} style={{ display: 'none' }} />
+
+                        <div className="absolute bottom-10 flex gap-4">
+                          <Button onClick={capturePhoto} variant="eco" className="px-6 py-3 text-lg">
+                            <Camera className="mr-2 h-5 w-5" />
+                            Capture
+                          </Button>
+
+                          <Button
+                            onClick={stopCamera}
+                            variant="ghost"
+                            className="px-6 py-3 text-lg border text-white"
+                          >
+                            Cancel
+                          </Button>
+                        </div></div>
                     )}
 
                     {image && !showCamera && (
-                      <img src={image} alt="Incident" className="absolute inset-0 w-full h-full object-cover rounded-lg" style={{ zIndex: 1 }} />
+                      <img
+                        src={image}
+                        alt="Incident"
+                        onClick={() => setPreviewOpen(true)}
+                        className="absolute inset-0 w-full h-full object-cover rounded-lg cursor-pointer"
+                        style={{ zIndex: 1 }}
+                      />
                     )}
                   </div>
 
@@ -326,7 +348,26 @@ export default function CaptureIncident() {
             </CardContent>
           </Card>
         </div>
+        {/* Fullscreen preview modal */}
+        {previewOpen && image && (
+          <div className="fixed inset-0 z-50 bg-black flex items-center justify-center">
+            <img
+              src={image}
+              alt="Preview"
+              className="max-w-full max-h-full object-contain"
+            />
+
+            <Button
+              onClick={() => setPreviewOpen(false)}
+              className="absolute top-6 right-6"
+              variant="ghost"
+            >
+              Close
+            </Button>
+          </div>
+        )}
       </main>
     </div>
+
   );
 }

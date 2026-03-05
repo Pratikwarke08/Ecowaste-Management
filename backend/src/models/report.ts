@@ -17,6 +17,17 @@ const reportSchema = new mongoose.Schema({
   points: { type: Number, default: 0 },
   wasteWeightKg: { type: Number, default: 0 },
   materialType: { type: String },
+  dustbinSignals: {
+    beforeImageBase64: String,
+    afterImageBase64: String,
+    weightBeforeKg: Number,
+    weightAfterKg: Number,
+    depthBefore: Number,
+    depthAfter: Number,
+    depthUnit: { type: String, enum: ["meter", "percent"], default: "meter" },
+    source: String,
+    submittedAt: Date
+  },
   verificationComment: { type: String },
   verifiedBy: { type: String },
   verifiedAt: { type: Date, index: true },
@@ -26,10 +37,49 @@ const reportSchema = new mongoose.Schema({
       class_name: String,
       confidence: Number,
       bbox: [Number],
-      points: Number
+      points: Number,
+      estimatedWeightRangeGrams: {
+        min: Number,
+        max: Number
+      }
     }],
     totalPoints: Number,
     confidenceMet: Boolean,
+    estimatedWeightRangeGrams: {
+      min: Number,
+      max: Number
+    },
+    dustbinBeforeAnalysis: {
+      wasteItems: [{
+        class_name: String,
+        confidence: Number,
+        bbox: [Number],
+        points: Number
+      }],
+      totalPoints: Number,
+      confidenceMet: Boolean
+    },
+    dustbinAfterAnalysis: {
+      wasteItems: [{
+        class_name: String,
+        confidence: Number,
+        bbox: [Number],
+        points: Number
+      }],
+      totalPoints: Number,
+      confidenceMet: Boolean
+    },
+    genuinity: {
+      isGenuine: Boolean,
+      confidenceScore: Number,
+      reasons: [String],
+      checks: mongoose.Schema.Types.Mixed,
+      observed: mongoose.Schema.Types.Mixed,
+      expectedWeightRangeGrams: {
+        min: Number,
+        max: Number
+      }
+    },
     dustbinCapacity: {
       capacity_percentage: Number,
       is_full: Boolean,
@@ -53,4 +103,3 @@ reportSchema.index({ collectorEmail: 1, submittedAt: -1 });
 reportSchema.index({ status: 1, submittedAt: -1 });
 
 export const Report = mongoose.model("Report", reportSchema);
-

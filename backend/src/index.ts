@@ -16,15 +16,22 @@ import incidentsRoutes from "./routes/incidents";
 dotenv.config();
 
 const app = express();
+const frontendOrigins = (process.env.FRONTEND_ORIGIN || "")
+  .split(",")
+  .map((origin) => origin.trim())
+  .filter(Boolean);
+const virtualDustbinOrigin = process.env.VIRTUAL_DUSTBIN_ORIGIN?.trim();
+const allowedOrigins = [
+  ...frontendOrigins,
+  ...(virtualDustbinOrigin ? [virtualDustbinOrigin] : [])
+];
 
 /* =========================
    CORS (PRODUCTION SAFE)
 ========================= */
 app.use(
   cors({
-    origin: process.env.FRONTEND_ORIGIN
-      ? [process.env.FRONTEND_ORIGIN]
-      : "*",
+    origin: allowedOrigins.length > 0 ? allowedOrigins : "*",
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     allowedHeaders: ["Content-Type", "Authorization"],
     credentials: true

@@ -19,7 +19,8 @@ import {
   X,
   Maximize2,
   ZoomIn,
-  Map as MapIcon
+  Map as MapIcon,
+  ExternalLink
 } from 'lucide-react';
 
 function getDistanceFromLatLonInMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
@@ -36,6 +37,7 @@ function getDistanceFromLatLonInMeters(lat1: number, lon1: number, lat2: number,
 }
 
 const Capture = () => {
+  const VIRTUAL_DUSTBIN_URL = (import.meta.env.VITE_VIRTUAL_DUSTBIN_URL || '').trim();
   const [step, setStep] = useState<'pickup' | 'disposal' | 'verify'>('pickup');
   const [pickupImage, setPickupImage] = useState<string | null>(null);
   const [pickupLocation, setPickupLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -60,6 +62,8 @@ const Capture = () => {
   const [manualMaterialType, setManualMaterialType] = useState('');
   const [manualWasteQuantityDescription, setManualWasteQuantityDescription] = useState('');
   const [manualSubmitting, setManualSubmitting] = useState(false);
+  const [tempPickupId, setTempPickupId] = useState<string | null>(null);
+  const [creatingTempPickup, setCreatingTempPickup] = useState(false);
   const userType = localStorage.getItem('userType') as 'collector' | 'employee';
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -141,6 +145,38 @@ const Capture = () => {
     }
   };
 
+  const createTempPickupSession = async (imageDataUrl: string, location: { lat: number; lng: number }) => {
+    try {
+      setCreatingTempPickup(true);
+      const response = await apiFetch('/reports/pickup-temp', {
+        method: 'POST',
+        body: JSON.stringify({
+          pickupImageBase64: imageDataUrl.replace(/^data:image\/\w+;base64,/, ''),
+          pickupLocation: location
+        })
+      });
+      const data = await response.json();
+      setTempPickupId(data?.tempPickupId || null);
+    } catch {
+      setTempPickupId(null);
+    } finally {
+      setCreatingTempPickup(false);
+    }
+  };
+
+  const openVirtualDustbinWithTemp = () => {
+    if (!VIRTUAL_DUSTBIN_URL) {
+      alert('Virtual dustbin URL is not configured. Set VITE_VIRTUAL_DUSTBIN_URL.');
+      return;
+    }
+    if (!tempPickupId) {
+      alert('Temporary pickup ID is not ready yet. Please wait a moment.');
+      return;
+    }
+    const targetUrl = `${VIRTUAL_DUSTBIN_URL.replace(/\/$/, '')}?tempPickupId=${encodeURIComponent(tempPickupId)}`;
+    window.open(targetUrl, '_blank', 'noopener,noreferrer');
+  };
+
   const capturePhoto = (type: 'pickup' | 'disposal') => {
     if (!videoRef.current || !canvasRef.current) return;
     const context = canvasRef.current.getContext('2d');
@@ -160,20 +196,23 @@ const Capture = () => {
     // Capture image and automatically fetch GPS
     if (type === 'pickup') {
       setPickupImage(imageData);
-      setTimeout(() => getCurrentLocation('pickup'), 300);
+      setTimeout(() => getCurrentLocation('pickup', imageData), 300);
     } else {
       setDisposalImage(imageData);
       setTimeout(() => getCurrentLocation('disposal'), 300);
     }
   };
 
-  const getCurrentLocation = async (type: 'pickup' | 'disposal') => {
+  const getCurrentLocation = async (type: 'pickup' | 'disposal', pickupImageData?: string) => {
     try {
       const coords = await getReliableLocation();
 
       if (type === 'pickup') {
         setPickupLocation(coords);
         setUserLocation(coords);
+        if (pickupImageData) {
+          void createTempPickupSession(pickupImageData, coords);
+        }
 
         // Photo was just captured automatically, proceed to next step
         setStep('disposal');
@@ -235,6 +274,7 @@ const Capture = () => {
       setDisposalImage(null);
       setDisposalLocation(null);
       setSelectedDustbin(null);
+      setTempPickupId(null);
       setMaterialType('');
       setWasteQuantityDescription('');
     } catch (e: unknown) {
@@ -661,6 +701,27 @@ const Capture = () => {
                         <p className="text-sm text-muted-foreground">Type: {nearestDustbin.bin.type}</p>
                       </div>
                     )}
+
+                    <div className="p-4 rounded-lg bg-blue-50 border border-blue-200 space-y-2">
+                      <p className="text-sm font-semibold text-blue-800">Virtual Dustbin Link</p>
+                      <p className="text-xs text-blue-700">
+                        {tempPickupId
+                          ? `Pickup image is linked with temporary ID: ${tempPickupId}`
+                          : creatingTempPickup
+                            ? 'Generating temporary pickup ID from captured pickup image...'
+                            : 'Temporary pickup ID not available yet.'}
+                      </p>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="w-full"
+                        onClick={openVirtualDustbinWithTemp}
+                        disabled={!tempPickupId || creatingTempPickup}
+                      >
+                        <ExternalLink className="h-4 w-4 mr-2" />
+                        Open Virtual Dustbin
+                      </Button>
+                    </div>
                   </CardContent>
                 </Card>
               </div>

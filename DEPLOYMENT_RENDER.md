@@ -10,7 +10,7 @@ Deploy as 4 services from the same repo:
 ### 1) ML Service
 - Root Directory: `ml`
 - Build Command: `pip install -r requirements.txt`
-- Start Command: `python app.py`
+- Start Command: `./render-start.sh`
 - Env:
   - `PORT` (Render sets automatically)
 

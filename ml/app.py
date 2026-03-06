@@ -125,8 +125,18 @@ def _compute_genuinity(
     }
 
 
+@app.get("/")
+def root_health():
+    return jsonify({"status": "ok", "service": "ecowaste-ml"})
+
+
 @app.get("/health")
 def health():
+    return jsonify({"status": "ok", "service": "ecowaste-ml"})
+
+
+@app.get("/api/health")
+def api_health():
     return jsonify({"status": "ok", "service": "ecowaste-ml"})
 
 

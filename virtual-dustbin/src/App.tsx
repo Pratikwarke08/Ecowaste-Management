@@ -14,6 +14,7 @@ type ReportContext = {
   pickupLocation?: { lat: number; lng: number };
   disposalLocation?: { lat: number; lng: number };
   points?: number;
+  dustbinId?: string;
   dustbinSignals?: {
     weightBeforeKg?: number;
     weightAfterKg?: number;
@@ -21,6 +22,26 @@ type ReportContext = {
     depthAfter?: number;
     depthUnit?: 'meter' | 'percent';
   };
+};
+
+type TempPickupContext = {
+  tempPickupId: string;
+  status: 'active' | 'converted' | 'expired';
+  collectorEmail?: string;
+  createdAt?: string;
+  expiresAt?: string;
+  linkedReportId?: string | null;
+  pickupImageBase64?: string;
+  pickupLocation?: { lat: number; lng: number };
+};
+
+type DustbinOption = {
+  _id: string;
+  name: string;
+  sector?: string;
+  type?: string;
+  coordinates?: { lat: number; lng: number };
+  status?: string;
 };
 
 const API_BASE =
@@ -49,10 +70,17 @@ function getAuthHeaders() {
 export default function App() {
   const queryParams = new URLSearchParams(window.location.search);
   const reportIdFromQuery = queryParams.get('reportId')?.trim() || '';
+  const tempPickupIdFromQuery = queryParams.get('tempPickupId')?.trim() || '';
 
   const [reportId, setReportId] = useState(reportIdFromQuery);
+  const [tempPickupId, setTempPickupId] = useState(tempPickupIdFromQuery);
   const [context, setContext] = useState<ReportContext | null>(null);
-  const [loadingContext, setLoadingContext] = useState(Boolean(reportIdFromQuery));
+  const [tempContext, setTempContext] = useState<TempPickupContext | null>(null);
+  const [loadingContext, setLoadingContext] = useState(Boolean(reportIdFromQuery || tempPickupIdFromQuery));
+
+  const [dustbins, setDustbins] = useState<DustbinOption[]>([]);
+  const [selectedDustbinId, setSelectedDustbinId] = useState('');
+  const [isFinalizing, setIsFinalizing] = useState(false);
 
   const [beforeImage, setBeforeImage] = useState<File | null>(null);
   const [afterImage, setAfterImage] = useState<File | null>(null);
@@ -76,30 +104,80 @@ export default function App() {
   }, [beforePreview, afterPreview]);
 
   useEffect(() => {
-    if (!reportIdFromQuery) return;
+    const loadDustbins = async () => {
+      try {
+        const response = await fetch(`${API_BASE}/reports/virtual-dustbin/dustbins`, {
+          method: 'GET',
+          headers: getAuthHeaders()
+        });
+        const data = await response.json();
+        if (!response.ok) return;
+        const options = Array.isArray(data?.dustbins) ? data.dustbins : [];
+        setDustbins(options);
+      } catch {
+        setDustbins([]);
+      }
+    };
+
+    loadDustbins();
+  }, []);
+
+  useEffect(() => {
+    const loadReportContext = async (id: string) => {
+      const response = await fetch(`${API_BASE}/reports/${id}/virtual-dustbin/context`, {
+        method: 'GET',
+        headers: getAuthHeaders()
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || 'Failed to load report context.');
+      }
+
+      setContext(data);
+      setTempContext(null);
+      setReportId(data.reportId);
+      setWeightBeforeKg(String(data?.dustbinSignals?.weightBeforeKg ?? ''));
+      setWeightAfterKg(String(data?.dustbinSignals?.weightAfterKg ?? ''));
+      setDepthBefore(String(data?.dustbinSignals?.depthBefore ?? ''));
+      setDepthAfter(String(data?.dustbinSignals?.depthAfter ?? ''));
+      setDepthUnit(data?.dustbinSignals?.depthUnit === 'percent' ? 'percent' : 'meter');
+      if (typeof data?.dustbinId === 'string') {
+        setSelectedDustbinId(data.dustbinId);
+      }
+    };
+
+    const loadTempContext = async (id: string) => {
+      const response = await fetch(`${API_BASE}/reports/pickup-temp/${id}/virtual-dustbin/context`, {
+        method: 'GET',
+        headers: getAuthHeaders()
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || 'Failed to load temporary pickup context.');
+      }
+
+      setTempContext(data);
+      setContext(null);
+      setTempPickupId(data.tempPickupId);
+      if (data.linkedReportId) {
+        setReportId(String(data.linkedReportId));
+      }
+    };
 
     const loadContext = async () => {
+      if (!reportId && !tempPickupId) return;
       try {
         setLoadingContext(true);
         setNotice(null);
 
-        const response = await fetch(`${API_BASE}/reports/${reportIdFromQuery}/virtual-dustbin/context`, {
-          method: 'GET',
-          headers: getAuthHeaders()
-        });
-
-        const data = await response.json();
-        if (!response.ok) {
-          throw new Error(data?.error || 'Failed to load report context.');
+        if (reportId) {
+          await loadReportContext(reportId);
+          return;
         }
 
-        setContext(data);
-        setReportId(data.reportId);
-        setWeightBeforeKg(String(data?.dustbinSignals?.weightBeforeKg ?? ''));
-        setWeightAfterKg(String(data?.dustbinSignals?.weightAfterKg ?? ''));
-        setDepthBefore(String(data?.dustbinSignals?.depthBefore ?? ''));
-        setDepthAfter(String(data?.dustbinSignals?.depthAfter ?? ''));
-        setDepthUnit(data?.dustbinSignals?.depthUnit === 'percent' ? 'percent' : 'meter');
+        if (tempPickupId) {
+          await loadTempContext(tempPickupId);
+        }
       } catch (err) {
         setNotice({ type: 'error', text: (err as Error).message });
       } finally {
@@ -108,7 +186,7 @@ export default function App() {
     };
 
     loadContext();
-  }, [reportIdFromQuery]);
+  }, [reportId, tempPickupId]);
 
   const resetForm = () => {
     setBeforeImage(null);
@@ -121,11 +199,52 @@ export default function App() {
     setNotice(null);
   };
 
+  const finalizeTempPickup = async () => {
+    if (!tempPickupId) {
+      setNotice({ type: 'error', text: 'Missing temporary pickup ID.' });
+      return;
+    }
+    if (!selectedDustbinId) {
+      setNotice({ type: 'error', text: 'Select a dustbin first.' });
+      return;
+    }
+
+    try {
+      setNotice(null);
+      setIsFinalizing(true);
+
+      const selectedDustbin = dustbins.find((d) => d._id === selectedDustbinId);
+      const response = await fetch(`${API_BASE}/reports/pickup-temp/${tempPickupId}/finalize`, {
+        method: 'POST',
+        headers: getAuthHeaders(),
+        body: JSON.stringify({
+          dustbinId: selectedDustbinId,
+          disposalLocation: selectedDustbin?.coordinates
+        })
+      });
+
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data?.error || 'Failed to convert temporary pickup into a report.');
+      }
+
+      setReportId(String(data.reportId));
+      setNotice({
+        type: 'success',
+        text: `Temporary pickup converted. Report ID: ${data.reportId}`
+      });
+    } catch (err) {
+      setNotice({ type: 'error', text: (err as Error).message });
+    } finally {
+      setIsFinalizing(false);
+    }
+  };
+
   const submit = async () => {
     setNotice(null);
 
     if (!reportId.trim()) {
-      setNotice({ type: 'error', text: 'Missing linked report ID.' });
+      setNotice({ type: 'error', text: 'Generate a report ID by selecting a dustbin first.' });
       return;
     }
     if (!beforeImage || !afterImage) {
@@ -183,42 +302,57 @@ export default function App() {
     }
   };
 
+  const selectedDustbin = dustbins.find((d) => d._id === selectedDustbinId) || null;
+  const pickupImageForPreview = context?.pickupImageBase64 || tempContext?.pickupImageBase64 || '';
+
   return (
     <div className="container">
       <div className="header">
         <h1>Ecowaste Virtual Dustbin</h1>
-        <p>{reportIdFromQuery ? 'Linked request received from frontend report click' : 'Open this page from pickup image action in frontend'}</p>
+        <p>
+          {reportId
+            ? 'Linked to report and ready for dustbin signal submission'
+            : tempPickupId
+              ? 'Temporary pickup linked. Select dustbin to generate final report ID.'
+              : 'Open this page from pickup image action in frontend'}
+        </p>
       </div>
 
       <div className="grid">
         <section className="card">
-          <h2>Linked Report</h2>
+          <h2>Linked Context</h2>
+
           <div className="row">
-            <label htmlFor="report-id">Report ID</label>
-            <input id="report-id" value={reportId} disabled placeholder="Linked report id" onChange={(e) => setReportId(e.target.value)} />
+            <label htmlFor="temp-id">Temporary Pickup ID</label>
+            <input id="temp-id" value={tempPickupId} disabled placeholder="temporary pickup id" onChange={(e) => setTempPickupId(e.target.value)} />
           </div>
 
-          {loadingContext && <p>Loading report context...</p>}
+          <div className="row">
+            <label htmlFor="report-id">Report ID</label>
+            <input id="report-id" value={reportId} disabled placeholder="generated after dustbin selection" onChange={(e) => setReportId(e.target.value)} />
+          </div>
 
-          {!loadingContext && context && (
+          {loadingContext && <p>Loading context...</p>}
+
+          {!loadingContext && (context || tempContext) && (
             <>
               <div className="row">
                 <label>Status</label>
-                <input value={context.status} disabled />
+                <input value={context?.status || tempContext?.status || '-'} disabled />
               </div>
               <div className="row">
                 <label>Collector</label>
-                <input value={context.collectorEmail || 'Unknown'} disabled />
+                <input value={context?.collectorEmail || tempContext?.collectorEmail || 'Unknown'} disabled />
               </div>
               <div className="row">
-                <label>Submitted</label>
-                <input value={context.submittedAt ? new Date(context.submittedAt).toLocaleString() : '-'} disabled />
+                <label>Created</label>
+                <input value={context?.submittedAt ? new Date(context.submittedAt).toLocaleString() : tempContext?.createdAt ? new Date(tempContext.createdAt).toLocaleString() : '-'} disabled />
               </div>
-              {context.pickupImageBase64 && (
+              {pickupImageForPreview && (
                 <div className="row">
-                  <label>Pickup Evidence (From Frontend)</label>
+                  <label>Pickup Evidence</label>
                   <img
-                    src={context.pickupImageBase64.startsWith('data:') ? context.pickupImageBase64 : `data:image/png;base64,${context.pickupImageBase64}`}
+                    src={pickupImageForPreview.startsWith('data:') ? pickupImageForPreview : `data:image/png;base64,${pickupImageForPreview}`}
                     alt="Pickup evidence"
                     className="preview"
                   />
@@ -227,8 +361,38 @@ export default function App() {
             </>
           )}
 
-          {!loadingContext && !context && reportIdFromQuery && (
-            <p>Unable to load report details for this request.</p>
+          {!loadingContext && !context && !tempContext && (reportIdFromQuery || tempPickupIdFromQuery) && (
+            <p>Unable to load linked details for this request.</p>
+          )}
+
+          {!!tempPickupId && !reportId && (
+            <>
+              <div className="row">
+                <label htmlFor="dustbin-select">Select Dustbin For Disposal</label>
+                <select id="dustbin-select" value={selectedDustbinId} onChange={(e) => setSelectedDustbinId(e.target.value)}>
+                  <option value="">Choose dustbin</option>
+                  {dustbins.map((d) => (
+                    <option key={d._id} value={d._id}>
+                      {d.name} {d.sector ? `(${d.sector})` : ''}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {selectedDustbin && (
+                <div className="row">
+                  <label>Selected Dustbin Details</label>
+                  <input
+                    value={`${selectedDustbin.name}${selectedDustbin.type ? ` • ${selectedDustbin.type}` : ''}${selectedDustbin.coordinates ? ` • ${selectedDustbin.coordinates.lat.toFixed(5)}, ${selectedDustbin.coordinates.lng.toFixed(5)}` : ''}`}
+                    disabled
+                  />
+                </div>
+              )}
+
+              <button className="primary" disabled={isFinalizing || !selectedDustbinId} onClick={finalizeTempPickup}>
+                {isFinalizing ? 'Generating Report ID...' : 'Generate Final Report ID'}
+              </button>
+            </>
           )}
 
           <div className="row">

@@ -1,6 +1,7 @@
 import express from "express";
 import { Report } from "../models/report";
 import { Dustbin } from "../models/dustbin";
+import { PickupSession } from "../models/pickupSession";
 import { authenticate, AuthenticatedRequest } from "../middleware/auth";
 import fs from "fs";
 import os from "os";
@@ -14,6 +15,7 @@ const PROJECT_ROOT = path.resolve(__dirname, "../../..");
 const BACKEND_ROOT = path.resolve(__dirname, "../..");
 const ML_SERVICE_URL = process.env.ML_SERVICE_URL;
 const VIRTUAL_DUSTBIN_KEY = process.env.VIRTUAL_DUSTBIN_KEY;
+const TEMP_PICKUP_TTL_HOURS = Number(process.env.TEMP_PICKUP_TTL_HOURS || "12");
 
 type WasteDetection = {
   wasteItems?: Array<{
@@ -27,6 +29,8 @@ type WasteDetection = {
   confidenceMet?: boolean;
   estimatedWeightRangeGrams?: { min?: number; max?: number };
 };
+
+type LatLng = { lat: number; lng: number };
 
 function resolvePythonBinary() {
   const envPython = process.env.AI_PYTHON_PATH;
@@ -82,6 +86,24 @@ function normalizeNumber(value: unknown, fallback = 0) {
     if (Number.isFinite(parsed)) return parsed;
   }
   return fallback;
+}
+
+function normalizeLocation(value: any): LatLng | null {
+  if (!value || typeof value !== "object") return null;
+  const lat = normalizeNumber(value.lat, NaN);
+  const lng = normalizeNumber(value.lng, NaN);
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+  return { lat, lng };
+}
+
+function ensureVirtualDustbinAccess(req: express.Request, res: express.Response) {
+  if (!VIRTUAL_DUSTBIN_KEY) return true;
+  const key = req.header("x-virtual-dustbin-key");
+  if (!key || key !== VIRTUAL_DUSTBIN_KEY) {
+    res.status(401).json({ error: "Invalid virtual dustbin key" });
+    return false;
+  }
+  return true;
 }
 
 function countWasteItems(detection: WasteDetection | null | undefined) {
@@ -399,14 +421,204 @@ router.post("/", authenticate, async (req: AuthenticatedRequest, res) => {
   }
 });
 
+// Create a temporary pickup session right after pickup capture
+router.post("/pickup-temp", authenticate, async (req: AuthenticatedRequest, res) => {
+  try {
+    const pickupImageBase64 = req.body?.pickupImageBase64;
+    const pickupLocation = normalizeLocation(req.body?.pickupLocation);
+    if (!pickupImageBase64 || !pickupLocation) {
+      return res.status(400).json({ error: "pickupImageBase64 and pickupLocation are required" });
+    }
+
+    const expiresAt = new Date(Date.now() + Math.max(1, TEMP_PICKUP_TTL_HOURS) * 60 * 60 * 1000);
+    const session = await PickupSession.create({
+      pickupImageBase64,
+      pickupLocation,
+      collectorEmail: req.authUser?.email,
+      collectorId: req.authUser?._id,
+      status: "active",
+      expiresAt
+    });
+
+    return res.status(201).json({
+      tempPickupId: session._id,
+      status: session.status,
+      expiresAt: session.expiresAt
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to create temporary pickup session" });
+  }
+});
+
+// Virtual dustbin context bootstrap for temporary pickup session
+router.get("/pickup-temp/:tempId/virtual-dustbin/context", async (req, res) => {
+  try {
+    if (!ensureVirtualDustbinAccess(req, res)) {
+      return;
+    }
+
+    const session = await PickupSession.findById(req.params.tempId)
+      .select("_id status pickupImageBase64 pickupLocation collectorEmail expiresAt linkedReportId createdAt")
+      .lean();
+
+    if (!session) {
+      return res.status(404).json({ error: "Temporary pickup session not found" });
+    }
+
+    if (session.expiresAt && new Date(session.expiresAt).getTime() < Date.now()) {
+      return res.status(410).json({ error: "Temporary pickup session has expired" });
+    }
+
+    return res.json({
+      tempPickupId: session._id,
+      status: session.status,
+      createdAt: session.createdAt,
+      expiresAt: session.expiresAt,
+      collectorEmail: session.collectorEmail,
+      pickupImageBase64: session.pickupImageBase64,
+      pickupLocation: session.pickupLocation,
+      linkedReportId: session.linkedReportId || null
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to load temporary pickup context" });
+  }
+});
+
+// Virtual dustbin public dustbin list (secured via key if configured)
+router.get("/virtual-dustbin/dustbins", async (req, res) => {
+  try {
+    if (!ensureVirtualDustbinAccess(req, res)) {
+      return;
+    }
+    const dustbins = await Dustbin.find({ status: { $ne: "maintenance" } })
+      .select("_id name sector type coordinates status verificationRadius")
+      .sort({ updatedAt: -1 })
+      .lean();
+    return res.json({ dustbins });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to load dustbins for virtual dustbin" });
+  }
+});
+
+// Convert temporary pickup session to a proper report once dustbin is selected
+router.post("/pickup-temp/:tempId/finalize", async (req, res) => {
+  try {
+    if (!ensureVirtualDustbinAccess(req, res)) {
+      return;
+    }
+
+    const dustbinId = typeof req.body?.dustbinId === "string" ? req.body.dustbinId : "";
+    if (!dustbinId) {
+      return res.status(400).json({ error: "dustbinId is required" });
+    }
+
+    const session = await PickupSession.findById(req.params.tempId);
+    if (!session) {
+      return res.status(404).json({ error: "Temporary pickup session not found" });
+    }
+    if (session.expiresAt && new Date(session.expiresAt).getTime() < Date.now()) {
+      session.status = "expired";
+      await session.save();
+      return res.status(410).json({ error: "Temporary pickup session has expired" });
+    }
+    if (session.linkedReportId) {
+      return res.json({ reportId: session.linkedReportId, tempPickupId: session._id, reused: true });
+    }
+
+    const dustbin = await Dustbin.findById(dustbinId).lean();
+    if (!dustbin || !dustbin.coordinates) {
+      return res.status(404).json({ error: "Dustbin not found" });
+    }
+
+    const disposalLocation = normalizeLocation(req.body?.disposalLocation) || {
+      lat: dustbin.coordinates.lat,
+      lng: dustbin.coordinates.lng
+    };
+
+    const mlAnalysis = await runMLAnalysis({
+      pickupImageBase64: session.pickupImageBase64,
+      dustbinBeforeImageBase64: undefined,
+      dustbinAfterImageBase64: undefined,
+      dustbinWeightBeforeKg: 0,
+      dustbinWeightAfterKg: 0,
+      dustbinDepthBefore: 0,
+      dustbinDepthAfter: 0,
+      dustbinDepthUnit: "meter"
+    });
+
+    const aiAnalysis: any = {
+      wasteItems: Array.isArray(mlAnalysis?.pickupAnalysis?.wasteItems) ? mlAnalysis.pickupAnalysis.wasteItems : [],
+      totalPoints: normalizeNumber(mlAnalysis?.totalPoints, 0),
+      confidenceMet: Boolean(mlAnalysis?.pickupAnalysis?.confidenceMet),
+      estimatedWeightRangeGrams: mlAnalysis?.pickupAnalysis?.estimatedWeightRangeGrams || { min: 0, max: 0 },
+      dustbinBeforeAnalysis: mlAnalysis?.dustbinBeforeAnalysis || {},
+      dustbinAfterAnalysis: mlAnalysis?.dustbinAfterAnalysis || {},
+      genuinity: mlAnalysis?.genuinity || {}
+    };
+
+    const distance = getDistanceMeters(disposalLocation, {
+      lat: dustbin.coordinates.lat,
+      lng: dustbin.coordinates.lng
+    });
+    if (distance !== null) {
+      aiAnalysis.disposalDistance = distance;
+      aiAnalysis.verificationThresholdMeters = DUSTBIN_VERIFICATION_DISTANCE_METERS;
+      aiAnalysis.withinVerificationRange = distance <= DUSTBIN_VERIFICATION_DISTANCE_METERS;
+      aiAnalysis.nearestDustbin = {
+        _id: dustbin._id,
+        name: dustbin.name,
+        lat: dustbin.coordinates.lat,
+        lng: dustbin.coordinates.lng
+      };
+    }
+
+    const report = await Report.create({
+      pickupImageBase64: session.pickupImageBase64,
+      pickupLocation: session.pickupLocation,
+      // Placeholder until virtual dustbin before/after is submitted.
+      disposalImageBase64: session.pickupImageBase64,
+      disposalLocation,
+      dustbinId: dustbin._id,
+      status: "pending",
+      collectorEmail: session.collectorEmail,
+      collectorId: session.collectorId,
+      points: aiAnalysis?.totalPoints || 0,
+      wasteWeightKg: 0,
+      dustbinSignals: {
+        weightBeforeKg: 0,
+        weightAfterKg: 0,
+        depthBefore: 0,
+        depthAfter: 0,
+        depthUnit: "meter",
+        source: "virtual-dustbin",
+        submittedAt: new Date()
+      },
+      aiAnalysis
+    });
+
+    session.linkedReportId = report._id as any;
+    session.status = "converted";
+    await session.save();
+
+    return res.status(201).json({
+      tempPickupId: session._id,
+      reportId: report._id,
+      status: session.status
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to finalize temporary pickup into report" });
+  }
+});
+
 // Virtual dustbin app update for a report
 router.post("/:id/virtual-dustbin", async (req, res) => {
   try {
-    if (VIRTUAL_DUSTBIN_KEY) {
-      const key = req.header("x-virtual-dustbin-key");
-      if (!key || key !== VIRTUAL_DUSTBIN_KEY) {
-        return res.status(401).json({ error: "Invalid virtual dustbin key" });
-      }
+    if (!ensureVirtualDustbinAccess(req, res)) {
+      return;
     }
 
     const {
@@ -438,6 +650,9 @@ router.post("/:id/virtual-dustbin", async (req, res) => {
     };
 
     (report as any).dustbinSignals = mergedSignals;
+    if (mergedSignals.afterImageBase64) {
+      report.disposalImageBase64 = mergedSignals.afterImageBase64;
+    }
 
     const mlAnalysis = await runMLAnalysis({
       pickupImageBase64: report.pickupImageBase64,
@@ -472,15 +687,12 @@ router.post("/:id/virtual-dustbin", async (req, res) => {
 // Virtual dustbin app context bootstrap for a report
 router.get("/:id/virtual-dustbin/context", async (req, res) => {
   try {
-    if (VIRTUAL_DUSTBIN_KEY) {
-      const key = req.header("x-virtual-dustbin-key");
-      if (!key || key !== VIRTUAL_DUSTBIN_KEY) {
-        return res.status(401).json({ error: "Invalid virtual dustbin key" });
-      }
+    if (!ensureVirtualDustbinAccess(req, res)) {
+      return;
     }
 
     const report = await Report.findById(req.params.id)
-      .select("_id status collectorEmail submittedAt pickupImageBase64 pickupLocation disposalLocation points dustbinSignals aiAnalysis.genuinity")
+      .select("_id status collectorEmail submittedAt pickupImageBase64 pickupLocation disposalLocation points dustbinId dustbinSignals aiAnalysis.genuinity")
       .lean();
 
     if (!report) {
@@ -495,6 +707,7 @@ router.get("/:id/virtual-dustbin/context", async (req, res) => {
       pickupImageBase64: report.pickupImageBase64,
       pickupLocation: report.pickupLocation,
       disposalLocation: report.disposalLocation,
+      dustbinId: report.dustbinId || undefined,
       points: report.points || 0,
       dustbinSignals: (report as any).dustbinSignals || {},
       genuinity: (report as any).aiAnalysis?.genuinity || null

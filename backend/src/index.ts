@@ -16,6 +16,9 @@ import incidentsRoutes from "./routes/incidents";
 dotenv.config();
 
 const app = express();
+const mlServiceUrl = process.env.ML_SERVICE_URL?.trim();
+const mlKeepaliveEnabled = (process.env.ML_KEEPALIVE_ENABLED || "true").toLowerCase() !== "false";
+const mlKeepaliveIntervalMs = Number(process.env.ML_KEEPALIVE_INTERVAL_MS || "300000"); // 5 min
 const frontendOrigins = (process.env.FRONTEND_ORIGIN || "")
   .split(",")
   .map((origin) => origin.trim())
@@ -33,7 +36,7 @@ app.use(
   cors({
     origin: allowedOrigins.length > 0 ? allowedOrigins : "*",
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization", "x-virtual-dustbin-key"],
     credentials: true
   })
 );
@@ -88,6 +91,36 @@ app.get("/api/health/db", (_req, res) => {
   });
 });
 
+app.get("/api/health/ml", async (_req, res) => {
+  if (!mlServiceUrl) {
+    return res.status(400).json({ status: "disabled", message: "ML_SERVICE_URL is not configured" });
+  }
+
+  const healthUrl = `${mlServiceUrl.replace(/\/$/, "")}/health`;
+  try {
+    const response = await fetch(healthUrl, { method: "GET" });
+    if (!response.ok) {
+      return res.status(502).json({
+        status: "down",
+        code: response.status,
+        endpoint: healthUrl
+      });
+    }
+    const data = await response.json().catch(() => ({}));
+    return res.json({
+      status: "up",
+      endpoint: healthUrl,
+      ml: data
+    });
+  } catch (err: any) {
+    return res.status(502).json({
+      status: "down",
+      endpoint: healthUrl,
+      error: err?.message || "ML health check failed"
+    });
+  }
+});
+
 /* =========================
    API ROUTES
 ========================= */
@@ -129,4 +162,26 @@ const PORT = Number(process.env.PORT) || 5000;
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`✅ Server running on port ${PORT}`);
+
+  if (!mlServiceUrl || !mlKeepaliveEnabled) {
+    console.log("ℹ️ ML keepalive disabled");
+    return;
+  }
+
+  const healthUrl = `${mlServiceUrl.replace(/\/$/, "")}/health`;
+  const pingMl = async () => {
+    try {
+      const response = await fetch(healthUrl, { method: "GET" });
+      if (!response.ok) {
+        console.warn(`⚠️ ML keepalive ping failed with status ${response.status}`);
+        return;
+      }
+      console.log(`✅ ML keepalive ping success (${healthUrl})`);
+    } catch (err: any) {
+      console.warn(`⚠️ ML keepalive ping error: ${err?.message || "unknown error"}`);
+    }
+  };
+
+  pingMl();
+  setInterval(pingMl, mlKeepaliveIntervalMs);
 });

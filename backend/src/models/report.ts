@@ -25,6 +25,9 @@ const reportSchema = new mongoose.Schema({
     depthBefore: Number,
     depthAfter: Number,
     depthUnit: { type: String, enum: ["meter", "percent"], default: "meter" },
+    mainDisposalSubmitted: { type: Boolean, default: false },
+    beforeSubmittedAt: Date,
+    afterSubmittedAt: Date,
     source: String,
     submittedAt: Date
   },

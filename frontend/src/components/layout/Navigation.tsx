@@ -18,7 +18,8 @@ import {
   AlertTriangle,
   HeartHandshake,
   Leaf,
-  Map
+  Map,
+  PartyPopper
 } from 'lucide-react'
 
 interface NavigationProps {
@@ -37,6 +38,7 @@ const Navigation = ({ userRole }: NavigationProps) => {
     { href: '/keep-alive', label: 'Keep Me Alive', icon: HeartHandshake },
     { href: '/complaints', label: 'Complaints', icon: MessageSquare },
     { href: '/community', label: 'Community', icon: Users },
+    { href: '/festivals', label: 'Report Festivals', icon: PartyPopper },
     { href: '/smog-tower', label: 'Smog Tower', icon: Leaf },
     { href: '/map', label: 'Map View', icon: Map },
     { href: '/settings', label: 'Settings', icon: Settings },
@@ -46,7 +48,9 @@ const Navigation = ({ userRole }: NavigationProps) => {
     { href: '/dashboard', label: 'Dashboard', icon: Home },
     { href: '/map', label: 'Map View', icon: Map },
     { href: '/dustbins', label: 'Manage Dustbins', icon: MapPin },
+    { href: '/air-towers-management', label: 'Air Towers', icon: Leaf },
     { href: '/incidents', label: 'Incidents', icon: AlertTriangle },
+    { href: '/festivals-management', label: 'Manage Festivals', icon: PartyPopper },
     { href: '/verify', label: 'Verify Reports', icon: Shield },
     { href: '/complaints', label: 'Complaints', icon: MessageSquare },
     { href: '/progress', label: 'Progress Tracking', icon: Users },

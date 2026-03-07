@@ -31,6 +31,105 @@ type WasteDetection = {
 };
 
 type LatLng = { lat: number; lng: number };
+type ManualWasteEntry = {
+  type?: string;
+  subtype?: string;
+  quantity?: number;
+  unitWeightGrams?: number;
+};
+
+const WASTE_WEIGHT_GRAMS: Record<string, number> = {
+  "plastic:water bottle": 15,
+  "plastic:soft drink bottle": 22,
+  "plastic:milk packet": 8,
+  "plastic:food wrapper": 5,
+  "plastic:carry bag": 6,
+  "metal:aluminum can": 14,
+  "metal:tin can": 28,
+  "glass:glass bottle": 250,
+  "paper:newspaper": 50,
+  "paper:cardboard": 120,
+  "paper:paper cup": 10,
+  "organic:food scraps": 120,
+  "organic:fruit peel": 80,
+  "textile:cloth piece": 90,
+  "ewaste:small cable": 35,
+  "ewaste:charger": 70
+};
+
+function normalizeKey(text: string) {
+  return text.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function manualEntriesToWeightKg(entries: ManualWasteEntry[]) {
+  let totalGrams = 0;
+  for (const entry of entries) {
+    const type = normalizeKey(entry.type || "");
+    const subtype = normalizeKey(entry.subtype || "");
+    const key = `${type}:${subtype}`;
+    const quantity = Math.max(0, normalizeNumber(entry.quantity, 0));
+    const fallbackUnit = WASTE_WEIGHT_GRAMS[key] || 0;
+    const unitWeightGrams = Math.max(0, normalizeNumber(entry.unitWeightGrams, fallbackUnit));
+    if (quantity > 0 && unitWeightGrams > 0) {
+      totalGrams += quantity * unitWeightGrams;
+    }
+  }
+  return Number((totalGrams / 1000).toFixed(4));
+}
+
+function aiClassToSubtype(aiClassName: string) {
+  const c = normalizeKey(aiClassName);
+  if (c.includes("water") && c.includes("bottle")) return "plastic:water bottle";
+  if (c.includes("bottle") && c.includes("glass")) return "glass:glass bottle";
+  if (c.includes("bottle")) return "plastic:soft drink bottle";
+  if (c.includes("can")) return "metal:aluminum can";
+  if (c.includes("wrapper")) return "plastic:food wrapper";
+  if (c.includes("bag")) return "plastic:carry bag";
+  if (c.includes("cardboard")) return "paper:cardboard";
+  if (c.includes("newspaper")) return "paper:newspaper";
+  if (c.includes("paper cup") || c.includes("cup")) return "paper:paper cup";
+  if (c.includes("fruit") || c.includes("peel")) return "organic:fruit peel";
+  if (c.includes("food")) return "organic:food scraps";
+  if (c.includes("cloth") || c.includes("textile")) return "textile:cloth piece";
+  if (c.includes("wire") || c.includes("cable")) return "ewaste:small cable";
+  if (c.includes("charger")) return "ewaste:charger";
+  return "";
+}
+
+function aiWasteItemsToWeightKg(wasteItems: any[]) {
+  if (!Array.isArray(wasteItems) || wasteItems.length === 0) return 0;
+  let totalGrams = 0;
+  for (const item of wasteItems) {
+    const subtypeKey = aiClassToSubtype(String(item?.class_name || ""));
+    if (!subtypeKey) continue;
+    totalGrams += WASTE_WEIGHT_GRAMS[subtypeKey] || 0;
+  }
+  return Number((totalGrams / 1000).toFixed(4));
+}
+
+function parseMaterialTypeFallbackToWeightKg(materialType: string) {
+  const tokens = String(materialType || "")
+    .split(/[|,;/]/)
+    .map((t) => t.trim())
+    .filter(Boolean);
+  if (tokens.length === 0) return 0;
+  let grams = 0;
+  for (const token of tokens) {
+    const subtypeKey = aiClassToSubtype(token);
+    grams += subtypeKey ? (WASTE_WEIGHT_GRAMS[subtypeKey] || 0) : 50;
+  }
+  return Number((grams / 1000).toFixed(4));
+}
+
+function estimateReportWasteKg(report: any) {
+  const explicitWeight = normalizeNumber(report?.wasteWeightKg, 0);
+  if (explicitWeight > 0) return explicitWeight;
+  const aiWeight = aiWasteItemsToWeightKg(report?.aiAnalysis?.wasteItems || []);
+  if (aiWeight > 0) return aiWeight;
+  const materialFallback = parseMaterialTypeFallbackToWeightKg(report?.materialType || "");
+  if (materialFallback > 0) return materialFallback;
+  return inferWeightFromPoints(normalizeNumber(report?.points, 0));
+}
 
 function resolvePythonBinary() {
   const envPython = process.env.AI_PYTHON_PATH;
@@ -104,6 +203,17 @@ function ensureVirtualDustbinAccess(req: express.Request, res: express.Response)
     return false;
   }
   return true;
+}
+
+function getVirtualRequestStage(signals: any) {
+  const beforeSubmitted = Boolean(signals?.beforeSubmittedAt || signals?.beforeImageBase64);
+  const mainDisposalSubmitted = Boolean(signals?.mainDisposalSubmitted);
+  const afterSubmitted = Boolean(signals?.afterSubmittedAt || signals?.afterImageBase64);
+
+  if (!beforeSubmitted) return "before_pending";
+  if (!mainDisposalSubmitted) return "waiting_main_disposal";
+  if (!afterSubmitted) return "after_pending";
+  return "completed";
 }
 
 function countWasteItems(detection: WasteDetection | null | undefined) {
@@ -421,6 +531,105 @@ router.post("/", authenticate, async (req: AuthenticatedRequest, res) => {
   }
 });
 
+// Finalize an existing report from collector app (used with temp-pickup -> report flow)
+router.post("/:id/collector-finalize", authenticate, async (req: AuthenticatedRequest, res) => {
+  try {
+    const {
+      disposalImageBase64,
+      disposalLocation,
+      dustbinId,
+      materialType,
+      wasteWeightKg
+    } = req.body || {};
+
+    const normalizedDisposalLocation = normalizeLocation(disposalLocation);
+    if (!disposalImageBase64 || !normalizedDisposalLocation) {
+      return res.status(400).json({ error: "disposalImageBase64 and disposalLocation are required" });
+    }
+
+    const report = await Report.findById(req.params.id);
+    if (!report) {
+      return res.status(404).json({ error: "Report not found" });
+    }
+
+    report.disposalImageBase64 = disposalImageBase64;
+    report.disposalLocation = normalizedDisposalLocation as any;
+    (report as any).dustbinSignals = {
+      ...((report as any).dustbinSignals || {}),
+      mainDisposalSubmitted: true
+    };
+    if (dustbinId) {
+      report.dustbinId = dustbinId;
+    }
+    if (materialType !== undefined) {
+      report.materialType = materialType;
+    }
+    if (typeof wasteWeightKg === "number") {
+      report.wasteWeightKg = wasteWeightKg;
+    }
+    if (!report.collectorEmail && req.authUser?.email) {
+      report.collectorEmail = req.authUser.email;
+    }
+    if (!report.collectorId && req.authUser?._id) {
+      report.collectorId = req.authUser._id;
+    }
+
+    const signals = (report as any).dustbinSignals || {};
+    const mlAnalysis = await runMLAnalysis({
+      pickupImageBase64: report.pickupImageBase64,
+      dustbinBeforeImageBase64: signals.beforeImageBase64,
+      dustbinAfterImageBase64: signals.afterImageBase64,
+      dustbinWeightBeforeKg: signals.weightBeforeKg,
+      dustbinWeightAfterKg: signals.weightAfterKg,
+      dustbinDepthBefore: signals.depthBefore,
+      dustbinDepthAfter: signals.depthAfter,
+      dustbinDepthUnit: signals.depthUnit
+    });
+
+    applyAnalysisToReport(report, mlAnalysis);
+    if (typeof report.points === "number" && report.points <= 0) {
+      report.points = normalizeNumber(mlAnalysis?.totalPoints, 0);
+    }
+
+    if (report.dustbinId) {
+      try {
+        const dustbin = await Dustbin.findById(report.dustbinId).lean();
+        if (dustbin?.coordinates) {
+          const distance = getDistanceMeters(normalizedDisposalLocation, {
+            lat: dustbin.coordinates.lat,
+            lng: dustbin.coordinates.lng
+          });
+          if (distance !== null) {
+            (report as any).aiAnalysis = (report as any).aiAnalysis || {};
+            (report as any).aiAnalysis.disposalDistance = distance;
+            (report as any).aiAnalysis.verificationThresholdMeters = DUSTBIN_VERIFICATION_DISTANCE_METERS;
+            (report as any).aiAnalysis.withinVerificationRange = distance <= DUSTBIN_VERIFICATION_DISTANCE_METERS;
+            (report as any).aiAnalysis.nearestDustbin = {
+              _id: dustbin._id,
+              name: dustbin.name,
+              lat: dustbin.coordinates.lat,
+              lng: dustbin.coordinates.lng
+            };
+          }
+        }
+      } catch (err) {
+        console.error("Failed to update disposal distance on collector finalize:", err);
+      }
+    }
+
+    await report.save();
+
+    return res.json({
+      id: report._id,
+      points: report.points || 0,
+      genuinity: (report as any).aiAnalysis?.genuinity || null
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to finalize report from collector app" });
+  }
+});
+
 // Create a temporary pickup session right after pickup capture
 router.post("/pickup-temp", authenticate, async (req: AuthenticatedRequest, res) => {
   try {
@@ -500,6 +709,92 @@ router.get("/virtual-dustbin/dustbins", async (req, res) => {
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: "Failed to load dustbins for virtual dustbin" });
+  }
+});
+
+// Virtual dustbin dashboard: requests and progress by dustbin
+router.get("/virtual-dustbin/dashboard", async (req, res) => {
+  try {
+    if (!ensureVirtualDustbinAccess(req, res)) {
+      return;
+    }
+
+    const dustbinId = typeof req.query.dustbinId === "string" ? req.query.dustbinId.trim() : "";
+    const limitRaw = Number(req.query.limit || 50);
+    const limit = Math.max(1, Math.min(200, Number.isFinite(limitRaw) ? limitRaw : 50));
+
+    const dustbinQuery: any = { status: { $ne: "maintenance" } };
+    if (dustbinId) {
+      dustbinQuery._id = dustbinId;
+    }
+
+    const dustbins = await Dustbin.find(dustbinQuery)
+      .select("_id name sector type status coordinates")
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    const reportQuery: any = {
+      dustbinId: { $in: dustbins.map((d: any) => d._id) }
+    };
+
+    const reports = await Report.find(reportQuery)
+      .select("_id dustbinId collectorEmail status submittedAt verifiedAt points dustbinSignals")
+      .sort({ submittedAt: -1 })
+      .limit(limit)
+      .lean();
+
+    const byDustbin = new Map<string, any>();
+    for (const dustbin of dustbins as any[]) {
+      byDustbin.set(String(dustbin._id), {
+        dustbinId: String(dustbin._id),
+        name: dustbin.name,
+        sector: dustbin.sector,
+        type: dustbin.type,
+        status: dustbin.status,
+        coordinates: dustbin.coordinates,
+        counts: {
+          total: 0,
+          before_pending: 0,
+          waiting_main_disposal: 0,
+          after_pending: 0,
+          completed: 0
+        }
+      });
+    }
+
+    const requestItems = (reports as any[]).map((report) => {
+      const stage = getVirtualRequestStage(report.dustbinSignals || {});
+      const dustbinKey = String(report.dustbinId || "");
+      const bucket = byDustbin.get(dustbinKey);
+      if (bucket) {
+        bucket.counts.total += 1;
+        bucket.counts[stage] += 1;
+      }
+
+      return {
+        reportId: String(report._id),
+        dustbinId: dustbinKey,
+        collectorEmail: report.collectorEmail || "Unknown",
+        status: report.status || "pending",
+        stage,
+        submittedAt: report.submittedAt || null,
+        verifiedAt: report.verifiedAt || null,
+        points: typeof report.points === "number" ? report.points : 0,
+        beforeSubmittedAt: report.dustbinSignals?.beforeSubmittedAt || null,
+        afterSubmittedAt: report.dustbinSignals?.afterSubmittedAt || null,
+        mainDisposalSubmitted: Boolean(report.dustbinSignals?.mainDisposalSubmitted)
+      };
+    });
+
+    return res.json({
+      dustbinFilter: dustbinId || null,
+      totalRequests: requestItems.length,
+      dustbins: Array.from(byDustbin.values()),
+      requests: requestItems
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to load virtual dustbin dashboard data" });
   }
 });
 
@@ -593,6 +888,7 @@ router.post("/pickup-temp/:tempId/finalize", async (req, res) => {
         depthBefore: 0,
         depthAfter: 0,
         depthUnit: "meter",
+        mainDisposalSubmitted: false,
         source: "virtual-dustbin",
         submittedAt: new Date()
       },
@@ -645,14 +941,15 @@ router.post("/:id/virtual-dustbin", async (req, res) => {
       depthBefore: normalizeNumber(depthBefore, normalizeNumber((report as any).dustbinSignals?.depthBefore, 0)),
       depthAfter: normalizeNumber(depthAfter, normalizeNumber((report as any).dustbinSignals?.depthAfter, 0)),
       depthUnit: depthUnit === "percent" ? "percent" : ((report as any).dustbinSignals?.depthUnit || "meter"),
+      beforeSubmittedAt: beforeImageBase64 ? new Date() : (report as any).dustbinSignals?.beforeSubmittedAt,
+      afterSubmittedAt: afterImageBase64 ? new Date() : (report as any).dustbinSignals?.afterSubmittedAt,
       source: "virtual-dustbin",
       submittedAt: new Date()
     };
 
     (report as any).dustbinSignals = mergedSignals;
-    if (mergedSignals.afterImageBase64) {
-      report.disposalImageBase64 = mergedSignals.afterImageBase64;
-    }
+    // Keep disposalImageBase64 as collector-captured disposal evidence.
+    // Virtual dustbin after image is stored only in dustbinSignals.afterImageBase64.
 
     const mlAnalysis = await runMLAnalysis({
       pickupImageBase64: report.pickupImageBase64,
@@ -699,6 +996,10 @@ router.get("/:id/virtual-dustbin/context", async (req, res) => {
       return res.status(404).json({ error: "Report not found" });
     }
 
+    const dustbin = report.dustbinId
+      ? await Dustbin.findById(report.dustbinId).select("_id name sector type coordinates status").lean()
+      : null;
+
     return res.json({
       reportId: report._id,
       status: report.status,
@@ -708,6 +1009,7 @@ router.get("/:id/virtual-dustbin/context", async (req, res) => {
       pickupLocation: report.pickupLocation,
       disposalLocation: report.disposalLocation,
       dustbinId: report.dustbinId || undefined,
+      dustbin: dustbin || undefined,
       points: report.points || 0,
       dustbinSignals: (report as any).dustbinSignals || {},
       genuinity: (report as any).aiAnalysis?.genuinity || null
@@ -767,19 +1069,26 @@ router.get("/latest-disposal-image", authenticate, async (req: AuthenticatedRequ
     if (!dustbinId || typeof dustbinId !== "string") {
       return res.status(400).json({ error: "dustbinId query parameter is required" });
     }
-    const query: any = { dustbinId, status: "approved" };
+    const query: any = {
+      dustbinId,
+      status: "approved",
+      "dustbinSignals.afterImageBase64": { $exists: true, $ne: "" }
+    };
 
     const report = await Report.findOne(query)
       .sort({ verifiedAt: -1, submittedAt: -1 })
-      .select("disposalImageBase64 submittedAt verifiedAt aiAnalysis.nearestDustbin dustbinId")
+      .select("dustbinSignals.afterImageBase64 submittedAt verifiedAt aiAnalysis.nearestDustbin dustbinId")
       .lean();
 
     if (!report) {
-      return res.status(404).json({ error: "No disposal reports found for this dustbin" });
+      return res.status(404).json({ error: "No approved virtual after image found for this dustbin" });
     }
 
+    const afterImageBase64 = (report as any).dustbinSignals?.afterImageBase64 || null;
     return res.json({
-      disposalImageBase64: report.disposalImageBase64,
+      afterImageBase64,
+      // Backward compatibility for existing frontend usage
+      disposalImageBase64: afterImageBase64,
       submittedAt: report.submittedAt,
       verifiedAt: (report as any).verifiedAt,
       nearestDustbin: report.aiAnalysis?.nearestDustbin || null
@@ -787,6 +1096,120 @@ router.get("/latest-disposal-image", authenticate, async (req: AuthenticatedRequ
   } catch (err) {
     console.error(err);
     return res.status(500).json({ error: "Failed to fetch latest disposal image" });
+  }
+});
+
+router.get("/analytics/progress", authenticate, async (req: AuthenticatedRequest, res) => {
+  try {
+    const period = String(req.query.period || "month").toLowerCase();
+    const now = new Date();
+    let fromDate: Date | null = null;
+    if (period === "week") fromDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    else if (period === "month") fromDate = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    else if (period === "quarter") fromDate = new Date(now.getTime() - 90 * 24 * 60 * 60 * 1000);
+    else if (period === "year") fromDate = new Date(now.getTime() - 365 * 24 * 60 * 60 * 1000);
+
+    const query: any = {};
+    if (fromDate) {
+      query.submittedAt = { $gte: fromDate };
+    }
+
+    const reports = await Report.find(query)
+      .select("_id status submittedAt points wasteWeightKg materialType collectorEmail dustbinId aiAnalysis.wasteItems")
+      .sort({ submittedAt: -1 })
+      .lean();
+
+    const dustbinIds = Array.from(new Set(reports.map((r: any) => String(r.dustbinId || "")).filter(Boolean)));
+    const dustbins = await Dustbin.find({ _id: { $in: dustbinIds } })
+      .select("_id name sector type")
+      .lean();
+    const dustbinMap = new Map<string, any>(dustbins.map((d: any) => [String(d._id), d]));
+
+    const approvedReports = reports.filter((r: any) => r.status === "approved");
+    const pendingReports = reports.filter((r: any) => r.status === "pending");
+    const rejectedReports = reports.filter((r: any) => r.status === "rejected");
+
+    const bySector = new Map<string, { sector: string; reports: number; totalKg: number }>();
+    const byDustbin = new Map<string, { dustbinId: string; name: string; sector: string; reports: number; totalKg: number }>();
+    const wasteDistribution = new Map<string, { wasteType: string; subtype: string; reports: number; totalKg: number }>();
+
+    const verifiedRows = approvedReports.map((report: any) => {
+      const dustbin = report.dustbinId ? dustbinMap.get(String(report.dustbinId)) : null;
+      const sector = dustbin?.sector || "Unknown";
+      const dustbinName = dustbin?.name || "Unknown Dustbin";
+      const weightKg = estimateReportWasteKg(report);
+      const reportId = String(report._id);
+
+      const sectorBucket = bySector.get(sector) || { sector, reports: 0, totalKg: 0 };
+      sectorBucket.reports += 1;
+      sectorBucket.totalKg += weightKg;
+      bySector.set(sector, sectorBucket);
+
+      const dustbinKey = String(report.dustbinId || "unknown");
+      const dustbinBucket = byDustbin.get(dustbinKey) || {
+        dustbinId: dustbinKey,
+        name: dustbinName,
+        sector,
+        reports: 0,
+        totalKg: 0
+      };
+      dustbinBucket.reports += 1;
+      dustbinBucket.totalKg += weightKg;
+      byDustbin.set(dustbinKey, dustbinBucket);
+
+      const aiItems = Array.isArray(report.aiAnalysis?.wasteItems) ? report.aiAnalysis.wasteItems : [];
+      if (aiItems.length > 0) {
+        for (const item of aiItems) {
+          const key = aiClassToSubtype(String(item?.class_name || ""));
+          if (!key) continue;
+          const [type, subtype] = key.split(":");
+          const unitKg = (WASTE_WEIGHT_GRAMS[key] || 0) / 1000;
+          const dist = wasteDistribution.get(key) || { wasteType: type, subtype, reports: 0, totalKg: 0 };
+          dist.reports += 1;
+          dist.totalKg += unitKg;
+          wasteDistribution.set(key, dist);
+        }
+      } else if (report.materialType) {
+        const key = "manual:manual entry";
+        const dist = wasteDistribution.get(key) || { wasteType: "manual", subtype: "manual entry", reports: 0, totalKg: 0 };
+        dist.reports += 1;
+        dist.totalKg += weightKg;
+        wasteDistribution.set(key, dist);
+      }
+
+      return {
+        reportId,
+        submittedAt: report.submittedAt,
+        collectorEmail: report.collectorEmail || "Unknown",
+        dustbinId: String(report.dustbinId || ""),
+        dustbinName,
+        sector,
+        weightKg: Number(weightKg.toFixed(4)),
+        wasteLabel: report.materialType || (aiItems.map((w: any) => String(w.class_name || "")).filter(Boolean).join(", ") || "Unclassified")
+      };
+    });
+
+    return res.json({
+      generatedAt: new Date().toISOString(),
+      period,
+      counts: {
+        total: reports.length,
+        verified: approvedReports.length,
+        unverified: pendingReports.length + rejectedReports.length,
+        pending: pendingReports.length,
+        rejected: rejectedReports.length
+      },
+      totals: {
+        verifiedWasteKg: Number(verifiedRows.reduce((sum, r) => sum + r.weightKg, 0).toFixed(4))
+      },
+      bySector: Array.from(bySector.values()).map((x) => ({ ...x, totalKg: Number(x.totalKg.toFixed(4)) })),
+      byDustbin: Array.from(byDustbin.values()).map((x) => ({ ...x, totalKg: Number(x.totalKg.toFixed(4)) })),
+      wasteDistribution: Array.from(wasteDistribution.values()).map((x) => ({ ...x, totalKg: Number(x.totalKg.toFixed(4)) })),
+      verifiedReports: verifiedRows
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to load progress analytics" });
   }
 });
 
@@ -804,7 +1227,15 @@ router.get("/:id", authenticate, async (req: AuthenticatedRequest, res) => {
 
 router.patch("/:id", authenticate, async (req: AuthenticatedRequest, res) => {
   try {
-    const { status, points, verificationComment, verifiedBy } = req.body || {};
+    const {
+      status,
+      points,
+      verificationComment,
+      verifiedBy,
+      materialType,
+      wasteWeightKg,
+      manualWasteEntries
+    } = req.body || {};
     if (!status || !["pending", "approved", "rejected"].includes(status)) {
       return res.status(400).json({ error: "Invalid status" });
     }
@@ -815,9 +1246,6 @@ router.patch("/:id", authenticate, async (req: AuthenticatedRequest, res) => {
     report.status = status;
     if (typeof points === "number") {
       report.points = points;
-      if (status === "approved" && (!report.wasteWeightKg || report.wasteWeightKg === 0)) {
-        report.wasteWeightKg = inferWeightFromPoints(points);
-      }
     }
     if (verificationComment !== undefined) {
       report.verificationComment = verificationComment;
@@ -825,8 +1253,37 @@ router.patch("/:id", authenticate, async (req: AuthenticatedRequest, res) => {
     if (verifiedBy !== undefined) {
       report.verifiedBy = verifiedBy;
     }
+    if (materialType !== undefined && typeof materialType === "string") {
+      report.materialType = materialType;
+    }
+    if (typeof wasteWeightKg === "number" && Number.isFinite(wasteWeightKg) && wasteWeightKg >= 0) {
+      report.wasteWeightKg = wasteWeightKg;
+    }
+
+    if (Array.isArray(manualWasteEntries) && manualWasteEntries.length > 0) {
+      const manualWeight = manualEntriesToWeightKg(manualWasteEntries);
+      if (manualWeight > 0) {
+        report.wasteWeightKg = manualWeight;
+      }
+      if (!report.materialType) {
+        const compact = manualWasteEntries
+          .map((e: any) => `${e?.type || "Unknown"} > ${e?.subtype || "Unknown"} x${normalizeNumber(e?.quantity, 0)}`)
+          .join(" | ");
+        report.materialType = compact;
+      }
+    }
     if (status === "approved") {
       (report as any).verifiedAt = new Date();
+      if (!report.wasteWeightKg || report.wasteWeightKg <= 0) {
+        const aiWeight = aiWasteItemsToWeightKg((report as any)?.aiAnalysis?.wasteItems || []);
+        if (aiWeight > 0) {
+          report.wasteWeightKg = aiWeight;
+        } else if (report.materialType) {
+          report.wasteWeightKg = parseMaterialTypeFallbackToWeightKg(report.materialType);
+        } else if (typeof points === "number") {
+          report.wasteWeightKg = inferWeightFromPoints(points);
+        }
+      }
     }
     await report.save();
 

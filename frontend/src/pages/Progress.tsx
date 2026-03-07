@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Navigation from '@/components/layout/Navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -50,17 +50,37 @@ const ProgressPage = () => {
     };
     leaderboard: Array<{ name: string; email: string; points: number }>;
   }>(null);
+  const [analytics, setAnalytics] = useState<null | {
+    generatedAt: string;
+    period: string;
+    counts: { total: number; verified: number; unverified: number; pending: number; rejected: number };
+    totals: { verifiedWasteKg: number };
+    bySector: Array<{ sector: string; reports: number; totalKg: number }>;
+    byDustbin: Array<{ dustbinId: string; name: string; sector: string; reports: number; totalKg: number }>;
+    wasteDistribution: Array<{ wasteType: string; subtype: string; reports: number; totalKg: number }>;
+    verifiedReports: Array<{
+      reportId: string;
+      submittedAt: string;
+      collectorEmail: string;
+      dustbinName: string;
+      sector: string;
+      weightKg: number;
+      wasteLabel: string;
+    }>;
+  }>(null);
 
   useEffect(() => {
     let mounted = true;
     (async () => {
       try {
-        const [resEmp, resCom] = await Promise.all([
+        const [resEmp, resCom, resAnalytics] = await Promise.all([
           apiFetch('/dashboard/employee'),
-          apiFetch('/dashboard/community')
+          apiFetch('/dashboard/community'),
+          apiFetch(`/reports/analytics/progress?period=${selectedPeriod}`)
         ]);
         const json = await resEmp.json();
         const jsonCom = await resCom.json();
+        const jsonAnalytics = await resAnalytics.json();
         if (!mounted) return;
         setEmployeeDash({
           reports: {
@@ -91,6 +111,7 @@ const ProgressPage = () => {
             points: l.points
           }))
         });
+        setAnalytics(jsonAnalytics || null);
       } catch (e: unknown) {
         if (!mounted) return;
         setError((e as Error)?.message || 'Failed to load progress data');
@@ -99,7 +120,7 @@ const ProgressPage = () => {
       }
     })();
     return () => { mounted = false; };
-  }, []);
+  }, [selectedPeriod]);
   const [selectedSector, setSelectedSector] = useState('all');
 
   const totalReports = employeeDash?.reports.totalReports ?? 0;
@@ -110,7 +131,20 @@ const ProgressPage = () => {
 
   const recentReports = employeeDash?.reports.recentReports || [];
 
-  const wasteTypeData: Array<{ type: string; amount: number; percentage: number; trend: string }> = [];
+  const wasteTypeData: Array<{ type: string; amount: number; percentage: number; trend: string }> = useMemo(
+    () =>
+      (analytics?.wasteDistribution || [])
+        .sort((a, b) => b.totalKg - a.totalKg)
+        .map((item) => ({
+          type: `${item.wasteType} • ${item.subtype}`,
+          amount: Number(item.totalKg.toFixed(2)),
+          percentage: analytics?.totals?.verifiedWasteKg
+            ? Number(((item.totalKg / analytics.totals.verifiedWasteKg) * 100).toFixed(1))
+            : 0,
+          trend: '0%'
+        })),
+    [analytics]
+  );
 
   const monthlyTrend = (employeeDash?.reports.monthlySeries || []).map(m => ({
     month: m.month,
@@ -143,56 +177,17 @@ const ProgressPage = () => {
     const autoTable = (await import('jspdf-autotable')).default;
     const doc = new jsPDF();
 
-    // Fetch fresh data for real-time PDF
-    let liveEmp: {
-      reports: {
-        weeklySeries: { week: string; reports: number; points: number }[];
-        monthlySeries: { month: string; reports: number; points: number }[];
-        totalReports?: number;
-        approvedToday?: number;
-        pendingCount?: number;
-      };
-      collectors?: unknown;
-    } | null = null;
-    let liveCom: {
-      stats: {
-        totalMembers?: number;
-        activeToday?: number;
-        wasteCollectedKg?: number;
-        co2SavedKg?: number;
-        totalPoints?: number;
-      };
-      leaderboard: { name: string; email: string; points: number }[]
-    } | null = null;
+    // Fetch fresh analytics data for real-time PDF
+    let liveAnalytics: typeof analytics | null = null;
     try {
-      const [resEmp, resCom] = await Promise.all([
-        apiFetch('/dashboard/employee'),
-        apiFetch('/dashboard/community')
-      ]);
-      liveEmp = await resEmp.json();
-      liveCom = await resCom.json();
-    } catch (e) {
-      // fall back to current state if live fetch fails
-      liveEmp = {
-        reports: {
-          weeklySeries: employeeDash?.reports?.weeklySeries || [],
-          monthlySeries: employeeDash?.reports?.monthlySeries || [],
-          totalReports: employeeDash?.reports?.totalReports,
-          approvedToday: employeeDash?.reports?.approvedToday,
-          pendingCount: employeeDash?.reports?.pendingCount
-        },
-        collectors: employeeDash?.collectors || {}
-      };
-      liveCom = {
-        stats: {
-          totalMembers: community?.stats?.totalMembers,
-          activeToday: community?.stats?.activeToday,
-          wasteCollectedKg: community?.stats?.wasteCollectedKg,
-          co2SavedKg: community?.stats?.co2SavedKg,
-          totalPoints: community?.stats?.totalPoints
-        },
-        leaderboard: community?.leaderboard || []
-      };
+      const res = await apiFetch(`/reports/analytics/progress?period=${selectedPeriod}`);
+      liveAnalytics = await res.json();
+    } catch {
+      liveAnalytics = analytics;
+    }
+
+    if (!liveAnalytics) {
+      return;
     }
 
     // Colors
@@ -215,11 +210,11 @@ const ProgressPage = () => {
     doc.setTextColor(0, 0, 0);
     doc.setFontSize(11);
     const kpis = [
-      `Total Reports: ${liveEmp?.reports?.totalReports || 0}`,
-      `Approved Today: ${liveEmp?.reports?.approvedToday || 0}`,
-      `Pending: ${liveEmp?.reports?.pendingCount || 0}`,
-      `Waste: ${(liveCom?.stats?.wasteCollectedKg || 0).toLocaleString()} kg`,
-      `CO2 Saved: ${(liveCom?.stats?.co2SavedKg || 0).toLocaleString()} kg`
+      `Total Reports: ${liveAnalytics.counts.total || 0}`,
+      `Verified: ${liveAnalytics.counts.verified || 0}`,
+      `Unverified: ${liveAnalytics.counts.unverified || 0}`,
+      `Pending: ${liveAnalytics.counts.pending || 0}`,
+      `Verified Waste: ${(liveAnalytics.totals.verifiedWasteKg || 0).toLocaleString()} kg`
     ];
     let x = 16;
     kpis.forEach((k) => {
@@ -227,31 +222,59 @@ const ProgressPage = () => {
       x += 38;
     });
 
-    // Build table data by period
-    let head: string[] = [];
-    let body: Array<(string | number)>[] = [];
-    if (selectedPeriod === 'week') {
-      head = ['Week', 'Approved Reports', 'Total Points'];
-      body = (liveEmp?.reports?.weeklySeries || []).map((w: { week: string; reports: number; points: number }) => [w.week, w.reports, w.points]);
-    } else if (selectedPeriod === 'month') {
-      head = ['Month', 'Approved Reports', 'Total Points'];
-      body = (liveEmp?.reports?.monthlySeries || []).map((m: { month: string; reports: number; points: number }) => [m.month, m.reports, m.points]);
-    } else if (selectedPeriod === 'quarter') {
-      head = ['Month', 'Approved Reports', 'Total Points'];
-      const months = (liveEmp?.reports?.monthlySeries || []).slice(-3);
-      body = months.map((m: { month: string; reports: number; points: number }) => [m.month, m.reports, m.points]);
-    } else {
-      head = ['Month', 'Approved Reports', 'Total Points'];
-      const months = (liveEmp?.reports?.monthlySeries || []).slice(-6);
-      body = months.map((m: { month: string; reports: number; points: number }) => [m.month, m.reports, m.points]);
+    let currentY = 65;
+    if ((liveAnalytics.counts.verified || 0) === 0) {
+      doc.setFontSize(12);
+      doc.setTextColor(180, 20, 20);
+      doc.text(`No verified reports for selected period. Unverified reports: ${liveAnalytics.counts.unverified || 0}`, 14, currentY + 8);
+      doc.save(`ecowaste-${periodTitle.toLowerCase()}-report.pdf`);
+      return;
     }
 
-    // Styled table
     autoTable(doc, {
-      startY: 65,
-      head: [head],
-      body,
-      styles: { fontSize: 10, cellPadding: 3 },
+      startY: currentY,
+      head: [['Dustbin', 'Sector', 'Verified Reports', 'Waste (kg)']],
+      body: (liveAnalytics.byDustbin || []).map((d) => [d.name, d.sector, d.reports, d.totalKg.toFixed(3)]),
+      styles: { fontSize: 9, cellPadding: 3 },
+      headStyles: { fillColor: [brand.r, brand.g, brand.b], textColor: 255, fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [245, 250, 247] },
+      theme: 'grid'
+    });
+    currentY = ((doc as any).lastAutoTable?.finalY || currentY) + 8; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+    autoTable(doc, {
+      startY: currentY,
+      head: [['Sector', 'Verified Reports', 'Waste (kg)']],
+      body: (liveAnalytics.bySector || []).map((s) => [s.sector, s.reports, s.totalKg.toFixed(3)]),
+      styles: { fontSize: 9, cellPadding: 3 },
+      headStyles: { fillColor: [brand.r, brand.g, brand.b], textColor: 255, fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [245, 250, 247] },
+      theme: 'grid'
+    });
+    currentY = ((doc as any).lastAutoTable?.finalY || currentY) + 8; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+    autoTable(doc, {
+      startY: currentY,
+      head: [['Waste Type', 'Subtype', 'Reports', 'Weight (kg)']],
+      body: (liveAnalytics.wasteDistribution || []).map((w) => [w.wasteType, w.subtype, w.reports, w.totalKg.toFixed(3)]),
+      styles: { fontSize: 9, cellPadding: 3 },
+      headStyles: { fillColor: [brand.r, brand.g, brand.b], textColor: 255, fontStyle: 'bold' },
+      alternateRowStyles: { fillColor: [245, 250, 247] },
+      theme: 'grid'
+    });
+    currentY = ((doc as any).lastAutoTable?.finalY || currentY) + 8; // eslint-disable-line @typescript-eslint/no-explicit-any
+
+    autoTable(doc, {
+      startY: currentY,
+      head: [['Report ID', 'Dustbin', 'Sector', 'Waste', 'Weight (kg)']],
+      body: (liveAnalytics.verifiedReports || []).slice(0, 50).map((r) => [
+        r.reportId.slice(-8),
+        r.dustbinName,
+        r.sector,
+        r.wasteLabel,
+        r.weightKg.toFixed(3)
+      ]),
+      styles: { fontSize: 8, cellPadding: 2.5 },
       headStyles: { fillColor: [brand.r, brand.g, brand.b], textColor: 255, fontStyle: 'bold' },
       alternateRowStyles: { fillColor: [245, 250, 247] },
       theme: 'grid'
@@ -261,7 +284,7 @@ const ProgressPage = () => {
     const finalY = (doc as any).lastAutoTable?.finalY || 75; // eslint-disable-line @typescript-eslint/no-explicit-any
     doc.setFontSize(10);
     doc.setTextColor(100);
-    doc.text('Generated by Ecowaste • Data reflects approved reports in the selected period.', 14, finalY + 10);
+    doc.text('Generated by Ecowaste • Real-time analytics by dustbin, sector, and waste distribution.', 14, finalY + 10);
     doc.save(`ecowaste-${periodTitle.toLowerCase()}-report.pdf`);
   };
 
@@ -428,30 +451,26 @@ const ProgressPage = () => {
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
                     <MapPin className="h-5 w-5 text-eco-forest-primary" />
-                    Recent Reports
+                    Waste Collection by Dustbin & Sector
                   </CardTitle>
                   <CardDescription>
-                    Latest submissions with current status
+                    Real-time verified waste collected from each dustbin and sector
                   </CardDescription>
                 </CardHeader>
                 <CardContent>
                   <div className="space-y-3">
-                    {recentReports.length === 0 ? (
-                      <p className="text-sm text-muted-foreground">No recent reports.</p>
+                    {(analytics?.byDustbin || []).length === 0 ? (
+                      <p className="text-sm text-muted-foreground">No verified reports for selected period.</p>
                     ) : (
-                      recentReports.map((r) => (
-                        <div key={r.id} className="flex items-center justify-between p-3 rounded-lg border">
+                      (analytics?.byDustbin || []).map((row) => (
+                        <div key={row.dustbinId || `${row.name}-${row.sector}`} className="flex items-center justify-between p-3 rounded-lg border">
                           <div>
-                            <p className="font-medium text-sm">Report #{r.id.toString().slice(-6)}</p>
-                            <p className="text-xs text-muted-foreground">
-                              {r.collectorEmail || 'Collector'} • {new Date(r.submittedAt).toLocaleString()}
-                            </p>
+                            <p className="font-medium text-sm">{row.name}</p>
+                            <p className="text-xs text-muted-foreground">{row.sector}</p>
                           </div>
                           <div className="flex items-center gap-2">
-                            <Badge variant={r.status === 'approved' ? 'default' : r.status === 'pending' ? 'secondary' : 'destructive'}>
-                              {r.status}
-                            </Badge>
-                            <Badge variant="outline">+{r.points || 0} pts</Badge>
+                            <Badge variant="outline">{row.reports} verified</Badge>
+                            <Badge variant="default">{row.totalKg.toFixed(2)} kg</Badge>
                           </div>
                         </div>
                       ))
@@ -479,7 +498,7 @@ const ProgressPage = () => {
                         <div className="flex items-center justify-between">
                           <div className="flex items-center gap-4">
                             <h3 className="font-medium">{item.type}</h3>
-                            <Badge variant="outline">{item.amount}kg</Badge>
+                            <Badge variant="outline">{item.amount.toFixed(2)}kg</Badge>
                           </div>
                           <div className="flex items-center gap-2">
                             <span className={`text-sm font-medium ${getTrendColor(item.trend)}`}>
@@ -488,14 +507,17 @@ const ProgressPage = () => {
                           </div>
                         </div>
                         <div className="space-y-2">
-                          <Progress value={item.percentage * 5} />
+                          <Progress value={item.percentage} />
                           <div className="flex justify-between text-xs text-muted-foreground">
                             <span>{item.percentage}% of total waste</span>
-                            <span>{item.amount.toLocaleString()}kg collected</span>
+                            <span>{item.amount.toFixed(2)}kg collected</span>
                           </div>
                         </div>
                       </div>
                     ))}
+                    {wasteTypeData.length === 0 && (
+                      <p className="text-sm text-muted-foreground">No waste distribution data for selected period.</p>
+                    )}
                   </div>
                 </CardContent>
               </Card>

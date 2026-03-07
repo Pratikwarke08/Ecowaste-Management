@@ -12,6 +12,8 @@ import dustbinsRoutes from "./routes/dustbins";
 import dashboardRoutes from "./routes/dashboard";
 import complaintsRoutes from "./routes/complaints";
 import incidentsRoutes from "./routes/incidents";
+import festivalRoutes from "./routes/festivals";
+import airTowersRoutes from "./routes/airTowers";
 
 dotenv.config();
 
@@ -133,6 +135,9 @@ app.use("/api/dustbins", dustbinsRoutes);
 app.use("/api/dashboard", dashboardRoutes);
 app.use("/api/complaints", complaintsRoutes);
 app.use("/api/incidents", incidentsRoutes);
+app.use("/api/festivals", festivalRoutes);
+app.use("/api/air-towers", airTowersRoutes);
+app.use("/api/smog-towers", airTowersRoutes);
 
 /* =========================
    404 HANDLER (JSON ONLY)

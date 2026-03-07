@@ -25,6 +25,9 @@ const CaptureIncident = lazy(() => import('./pages/CaptureIncident'));
 const IncidentsReview = lazy(() => import('./pages/IncidentsReview'));
 const KeepMeAlive = lazy(() => import('./pages/KeepMeAlive'));
 const SmogTowerWizard = lazy(() => import('./pages/smogtower'));
+const ArtificialLungMonitoring = lazy(() => import('./pages/ArtificialLungMonitoring'));
+const Festivals = lazy(() => import('./pages/Festivals'));
+const FestivalsManagement = lazy(() => import('./pages/FestivalsManagement'));
 const MapPage = lazy(() => import("./pages/Map"));
 
 // Optimized QueryClient with caching
@@ -57,6 +60,29 @@ const ProtectedRoute = ({ children }: { children: ReactNode }) => {
     // Hard redirect + history replacement
     window.history.replaceState(null, "", "/");
     return <Navigate to="/" replace state={{ from: location }} />;
+  }
+
+  return children;
+};
+
+const RoleProtectedRoute = ({
+  children,
+  allowedRoles,
+}: {
+  children: ReactNode;
+  allowedRoles: Array<"collector" | "employee">;
+}) => {
+  const location = useLocation();
+  const token = localStorage.getItem("token");
+  const userType = localStorage.getItem("userType") as "collector" | "employee" | null;
+
+  if (!token) {
+    window.history.replaceState(null, "", "/");
+    return <Navigate to="/" replace state={{ from: location }} />;
+  }
+
+  if (!userType || !allowedRoles.includes(userType)) {
+    return <Navigate to="/dashboard" replace />;
   }
 
   return children;
@@ -140,6 +166,14 @@ const App = () => {
                   <ProtectedRoute>
                     <SmogTowerWizard />
                   </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/air-towers-management"
+                element={
+                  <RoleProtectedRoute allowedRoles={["employee"]}>
+                    <ArtificialLungMonitoring />
+                  </RoleProtectedRoute>
                 }
               />
               <Route
@@ -227,6 +261,22 @@ const App = () => {
                 element={
                   <ProtectedRoute>
                     <IncidentsReview />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/festivals"
+                element={
+                  <ProtectedRoute>
+                    <Festivals />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/festivals-management"
+                element={
+                  <ProtectedRoute>
+                    <FestivalsManagement />
                   </ProtectedRoute>
                 }
               />

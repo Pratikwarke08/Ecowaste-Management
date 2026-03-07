@@ -15,12 +15,10 @@ import {
   Upload,
   Trash2,
   Recycle,
-  Navigation as NavIcon,
   X,
   Maximize2,
   ZoomIn,
-  Map as MapIcon,
-  ExternalLink
+  Map as MapIcon
 } from 'lucide-react';
 
 function getDistanceFromLatLonInMeters(lat1: number, lon1: number, lat2: number, lon2: number) {
@@ -37,7 +35,6 @@ function getDistanceFromLatLonInMeters(lat1: number, lon1: number, lat2: number,
 }
 
 const Capture = () => {
-  const VIRTUAL_DUSTBIN_URL = (import.meta.env.VITE_VIRTUAL_DUSTBIN_URL || '').trim();
   const [step, setStep] = useState<'pickup' | 'disposal' | 'verify'>('pickup');
   const [pickupImage, setPickupImage] = useState<string | null>(null);
   const [pickupLocation, setPickupLocation] = useState<{ lat: number; lng: number } | null>(null);
@@ -64,10 +61,16 @@ const Capture = () => {
   const [manualSubmitting, setManualSubmitting] = useState(false);
   const [tempPickupId, setTempPickupId] = useState<string | null>(null);
   const [creatingTempPickup, setCreatingTempPickup] = useState(false);
+  const [finalizingTempReport, setFinalizingTempReport] = useState(false);
+  const [linkedReportId, setLinkedReportId] = useState<string | null>(null);
+  const [flowStatus, setFlowStatus] = useState<string>('');
+  const [submitInProgress, setSubmitInProgress] = useState(false);
+  const [cameraError, setCameraError] = useState<string>('');
   const userType = localStorage.getItem('userType') as 'collector' | 'employee';
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const mapRef = useRef<HTMLDivElement | null>(null);
+  const cameraStreamRef = useRef<MediaStream | null>(null);
 
   // Track user location in real-time
   useEffect(() => {
@@ -122,28 +125,76 @@ const Capture = () => {
 
   // ML integration removed; manual verification flow only
 
+  const stopCamera = () => {
+    if (cameraStreamRef.current) {
+      cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+      cameraStreamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setShowCamera(null);
+  };
+
   const startCamera = async (type: 'pickup' | 'disposal') => {
+    setCameraError('');
     setShowCamera(type);
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+  };
+
+  useEffect(() => {
+    if (!showCamera) {
+      return;
+    }
+    let cancelled = false;
+
+    const initCamera = async () => {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setCameraError('Camera API not available in this browser.');
+        return;
+      }
       try {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: { exact: "environment" }, width: 1280, height: 720 }
-        });
+        // Wait one tick so modal video element is mounted before assigning stream.
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        if (cancelled) return;
+
+        let stream: MediaStream;
+        try {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: { exact: 'environment' }, width: 1280, height: 720 }
+          });
+        } catch {
+          stream = await navigator.mediaDevices.getUserMedia({
+            video: { width: 1280, height: 720 }
+          });
+        }
+        if (cancelled) {
+          stream.getTracks().forEach((track) => track.stop());
+          return;
+        }
+        cameraStreamRef.current = stream;
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
-          videoRef.current.play();
+          await videoRef.current.play().catch(() => undefined);
         }
       } catch (err) {
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { width: 1280, height: 720 }
-        });
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          videoRef.current.play();
-        }
+        const message = (err as Error)?.message || 'Unable to access camera. Check browser permissions.';
+        setCameraError(message);
       }
-    }
-  };
+    };
+
+    void initCamera();
+
+    return () => {
+      cancelled = true;
+      if (cameraStreamRef.current) {
+        cameraStreamRef.current.getTracks().forEach((track) => track.stop());
+        cameraStreamRef.current = null;
+      }
+      if (videoRef.current) {
+        videoRef.current.srcObject = null;
+      }
+    };
+  }, [showCamera]);
 
   const createTempPickupSession = async (imageDataUrl: string, location: { lat: number; lng: number }) => {
     try {
@@ -157,24 +208,14 @@ const Capture = () => {
       });
       const data = await response.json();
       setTempPickupId(data?.tempPickupId || null);
+      setLinkedReportId(null);
+      setFlowStatus(data?.tempPickupId ? `Temporary pickup created: ${data.tempPickupId}` : 'Temporary pickup was not created.');
     } catch {
       setTempPickupId(null);
+      setFlowStatus('Failed to create temporary pickup session.');
     } finally {
       setCreatingTempPickup(false);
     }
-  };
-
-  const openVirtualDustbinWithTemp = () => {
-    if (!VIRTUAL_DUSTBIN_URL) {
-      alert('Virtual dustbin URL is not configured. Set VITE_VIRTUAL_DUSTBIN_URL.');
-      return;
-    }
-    if (!tempPickupId) {
-      alert('Temporary pickup ID is not ready yet. Please wait a moment.');
-      return;
-    }
-    const targetUrl = `${VIRTUAL_DUSTBIN_URL.replace(/\/$/, '')}?tempPickupId=${encodeURIComponent(tempPickupId)}`;
-    window.open(targetUrl, '_blank', 'noopener,noreferrer');
   };
 
   const capturePhoto = (type: 'pickup' | 'disposal') => {
@@ -187,11 +228,7 @@ const Capture = () => {
     context.drawImage(videoRef.current, 0, 0, 640, 480);
     const imageData = canvasRef.current.toDataURL('image/png');
 
-    const stream = videoRef.current.srcObject as MediaStream;
-    if (stream) {
-      stream.getTracks().forEach(track => track.stop());
-    }
-    setShowCamera(null);
+    stopCamera();
 
     // Capture image and automatically fetch GPS
     if (type === 'pickup') {
@@ -243,6 +280,7 @@ const Capture = () => {
 
   const submitReport = async () => {
     try {
+      setSubmitInProgress(true);
       if (!pickupImage || !pickupLocation || !disposalImage || !disposalLocation) {
         alert('Please capture both photos and locations before submitting.');
         return;
@@ -255,19 +293,29 @@ const Capture = () => {
         .map((s) => s.trim())
         .filter(Boolean)
         .join(' | ');
-      const res = await apiFetch('/reports', {
-        method: 'POST',
-        body: JSON.stringify({
+      const endpoint = linkedReportId ? `/reports/${linkedReportId}/collector-finalize` : '/reports';
+      const payload = linkedReportId
+        ? {
+          disposalImageBase64: disposalImage.replace(/^data:image\/\w+;base64,/, ''),
+          disposalLocation,
+          dustbinId: selectedDustbin._id,
+          materialType: combinedMaterial || undefined,
+        }
+        : {
           pickupImageBase64: pickupImage.replace(/^data:image\/\w+;base64,/, ''),
           pickupLocation,
           disposalImageBase64: disposalImage.replace(/^data:image\/\w+;base64,/, ''),
           disposalLocation,
           dustbinId: selectedDustbin._id,
           materialType: combinedMaterial || undefined,
-        })
+        };
+      const res = await apiFetch(endpoint, {
+        method: 'POST',
+        body: JSON.stringify(payload)
       });
       const data = await res.json();
       alert(`🎉 Waste collection report submitted successfully! Awaiting manual verification.`);
+      setFlowStatus(`Report submitted. ID: ${linkedReportId || data?.id || 'new report'}`);
       setStep('pickup');
       setPickupImage(null);
       setPickupLocation(null);
@@ -275,13 +323,47 @@ const Capture = () => {
       setDisposalLocation(null);
       setSelectedDustbin(null);
       setTempPickupId(null);
+      setLinkedReportId(null);
       setMaterialType('');
       setWasteQuantityDescription('');
     } catch (e: unknown) {
       const errorMessage = (e as Error)?.message || 'Upload failed. Please try again.';
+      setFlowStatus(`Submit failed: ${errorMessage}`);
       alert(errorMessage);
+    } finally {
+      setSubmitInProgress(false);
     }
   };
+
+  useEffect(() => {
+    const finalizeTempToReport = async () => {
+      if (!tempPickupId || !selectedDustbin?._id) return;
+      if (linkedReportId) return;
+      try {
+        setFinalizingTempReport(true);
+        setFlowStatus('Linking selected dustbin with temporary pickup...');
+        const res = await apiFetch(`/reports/pickup-temp/${tempPickupId}/finalize`, {
+          method: 'POST',
+          body: JSON.stringify({
+            dustbinId: selectedDustbin._id,
+            disposalLocation: selectedDustbin.coordinates
+          })
+        });
+        const data = await res.json();
+        if (data?.reportId) {
+          setLinkedReportId(String(data.reportId));
+          setFlowStatus(`Linked report created: ${data.reportId}`);
+        }
+      } catch (e) {
+        const message = (e as Error)?.message || 'Failed to link dustbin to temporary pickup.';
+        setFlowStatus(message);
+        alert(message);
+      } finally {
+        setFinalizingTempReport(false);
+      }
+    };
+    void finalizeTempToReport();
+  }, [tempPickupId, selectedDustbin?._id, linkedReportId]);
 
   const submitManualTestReport = async () => {
     try {
@@ -482,6 +564,7 @@ const Capture = () => {
                         ref={videoRef}
                         autoPlay
                         playsInline
+                        muted
                         className="w-full h-full object-cover"
                       />
 
@@ -499,9 +582,7 @@ const Capture = () => {
 
                         <Button
                           onClick={() => {
-                            const stream = videoRef.current?.srcObject as MediaStream;
-                            stream?.getTracks().forEach(track => track.stop());
-                            setShowCamera(null);
+                            stopCamera();
                           }}
                           variant="outline"
                           className="px-6 py-3 text-lg text-white border-white"
@@ -509,6 +590,11 @@ const Capture = () => {
                           Cancel
                         </Button>
                       </div>
+                      {cameraError && (
+                        <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-red-600/90 text-white px-4 py-2 rounded text-sm">
+                          {cameraError}
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -602,6 +688,7 @@ const Capture = () => {
                         ref={videoRef}
                         autoPlay
                         playsInline
+                        muted
                         className="w-full h-full object-cover"
                       />
 
@@ -619,9 +706,7 @@ const Capture = () => {
 
                         <Button
                           onClick={() => {
-                            const stream = videoRef.current?.srcObject as MediaStream;
-                            stream?.getTracks().forEach(track => track.stop());
-                            setShowCamera(null);
+                            stopCamera();
                           }}
                           variant="outline"
                           className="px-6 py-3 text-lg text-white border-white"
@@ -629,6 +714,11 @@ const Capture = () => {
                           Cancel
                         </Button>
                       </div>
+                      {cameraError && (
+                        <div className="absolute top-6 left-1/2 -translate-x-1/2 bg-red-600/90 text-white px-4 py-2 rounded text-sm">
+                          {cameraError}
+                        </div>
+                      )}
                     </div>
                   )}
 
@@ -703,24 +793,25 @@ const Capture = () => {
                     )}
 
                     <div className="p-4 rounded-lg bg-blue-50 border border-blue-200 space-y-2">
-                      <p className="text-sm font-semibold text-blue-800">Virtual Dustbin Link</p>
+                      <p className="text-sm font-semibold text-blue-800">Virtual Dustbin Sync Status</p>
                       <p className="text-xs text-blue-700">
-                        {tempPickupId
+                        {linkedReportId
+                          ? `Linked report ID created: ${linkedReportId}`
+                          : tempPickupId
                           ? `Pickup image is linked with temporary ID: ${tempPickupId}`
                           : creatingTempPickup
                             ? 'Generating temporary pickup ID from captured pickup image...'
                             : 'Temporary pickup ID not available yet.'}
                       </p>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="w-full"
-                        onClick={openVirtualDustbinWithTemp}
-                        disabled={!tempPickupId || creatingTempPickup}
-                      >
-                        <ExternalLink className="h-4 w-4 mr-2" />
-                        Open Virtual Dustbin
-                      </Button>
+                      {finalizingTempReport && (
+                        <p className="text-xs text-blue-700">Finalizing temporary pickup with selected dustbin...</p>
+                      )}
+                      {flowStatus && (
+                        <p className="text-xs text-blue-700">{flowStatus}</p>
+                      )}
+                      <p className="text-[11px] text-blue-700">
+                        Dustbin selection now updates backend request queue directly. Collector stays on this page.
+                      </p>
                     </div>
                   </CardContent>
                 </Card>
@@ -808,11 +899,12 @@ const Capture = () => {
 
                 <Button
                   onClick={submitReport}
+                  disabled={submitInProgress}
                   className="w-full h-16 text-lg bg-gradient-to-r from-green-600 to-blue-600 hover:from-green-700 hover:to-blue-700 shadow-xl"
                   size="lg"
                 >
                   <Upload className="mr-2 h-6 w-6" />
-                  Submit Report
+                  {submitInProgress ? 'Submitting Report...' : 'Submit Report'}
                 </Button>
               </div>
             </div>

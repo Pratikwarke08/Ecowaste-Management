@@ -17,13 +17,17 @@ import {
   ChevronRight
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
+import { useToast } from '@/hooks/use-toast';
 
 // --- Types ---
 export type TowerScale = 'home' | 'balcony' | 'front_yard' | 'community_corner' | 'school';
+export type DeploymentType = 'smog_tower' | 'artificial_lung';
 
 export interface TowerPlan {
   id: string;
   ownerId: string;
+  deploymentType: DeploymentType;
+  towerName: string;
   location: { lat: number; lng: number; address?: string };
   scale: TowerScale;
   config: { pothos: number; bamboo: number; vetiverMeters: number };
@@ -32,6 +36,8 @@ export interface TowerPlan {
 }
 
 const INITIAL_LOCAL_PLAN: Omit<TowerPlan, 'id' | 'ownerId'> = {
+  deploymentType: 'smog_tower',
+  towerName: '',
   location: { lat: 0, lng: 0, address: '' },
   scale: 'home',
   config: { pothos: 3, bamboo: 0, vetiverMeters: 1 },
@@ -40,6 +46,7 @@ const INITIAL_LOCAL_PLAN: Omit<TowerPlan, 'id' | 'ownerId'> = {
 
 const SmogTowerWizard: React.FC = () => {
   const navigate = useNavigate();
+  const { toast } = useToast();
   const [plans, setPlans] = useState<TowerPlan[]>([]);
   const [activePlan, setActivePlan] = useState<TowerPlan | null>(null);
   const [localPlan, setLocalPlan] = useState<typeof INITIAL_LOCAL_PLAN>(INITIAL_LOCAL_PLAN);
@@ -63,6 +70,8 @@ const SmogTowerWizard: React.FC = () => {
           const coerced: TowerPlan[] = json.map((item: any) => ({
             id: String(item.id || item._id || `plan_${Date.now()}`),
             ownerId: String(item.ownerId || item.owner || 'unknown'),
+            deploymentType: (item.towerType as DeploymentType) || 'smog_tower',
+            towerName: String(item.towerName || item.name || `${(item.towerType || 'smog_tower').replace('_', ' ')} deployment`),
             location: {
               lat: Number(item.location?.lat ?? 0),
               lng: Number(item.location?.lng ?? 0),
@@ -74,7 +83,9 @@ const SmogTowerWizard: React.FC = () => {
               bamboo: Number(item.config?.bamboo ?? 0),
               vetiverMeters: Number(item.config?.vetiverMeters ?? 0)
             },
-            status: (item.status === 'planted' || item.status === 'maintaining') ? item.status : 'planned',
+            status: item.status === 'maintenance_needed'
+              ? 'maintaining'
+              : (item.status === 'working' ? 'planted' : 'planned'),
             plantedAt: item.plantedAt ? String(item.plantedAt) : undefined
           }));
           setPlans(coerced);
@@ -107,6 +118,8 @@ const SmogTowerWizard: React.FC = () => {
       const newPlan: TowerPlan = {
         id: `plan_${Date.now()}`,
         ownerId: 'me',
+        deploymentType: localPlan.deploymentType,
+        towerName: localPlan.towerName || (localPlan.deploymentType === 'artificial_lung' ? 'Artificial Lung Tower' : 'Natural Smog Tower'),
         location: {
           lat: Number(localPlan.location.lat ?? 0),
           lng: Number(localPlan.location.lng ?? 0),
@@ -130,7 +143,20 @@ const SmogTowerWizard: React.FC = () => {
         const res = await apiFetch('/smog-towers', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(newPlan)
+          body: JSON.stringify({
+            towerType: newPlan.deploymentType,
+            towerName: newPlan.towerName,
+            location: newPlan.location,
+            scale: newPlan.scale,
+            config: newPlan.config,
+            installationDate: new Date().toISOString(),
+            towerHeight: newPlan.deploymentType === 'artificial_lung' ? 18 : 8,
+            capacity: newPlan.deploymentType === 'artificial_lung' ? 1200 : 450,
+            status: "working",
+            totalAirProcessedToday: 0,
+            pm25Reduction: 0,
+            co2Reduction: 0
+          })
         });
         // optional: update id from server response
         if (res && typeof res.json === 'function') {
@@ -278,6 +304,32 @@ const SmogTowerWizard: React.FC = () => {
 
                   {step === 1 && (
                     <div className="space-y-3">
+                      <label className="text-xs font-medium">Deployment type</label>
+                      <div className="flex flex-wrap gap-2">
+                        <Button
+                          className="flex-1 sm:flex-auto"
+                          variant={localPlan.deploymentType === 'smog_tower' ? 'eco' : 'ghost'}
+                          onClick={() => setLocalPlan(prev => ({ ...prev, deploymentType: 'smog_tower' }))}
+                        >
+                          Natural Smog Tower
+                        </Button>
+                        <Button
+                          className="flex-1 sm:flex-auto"
+                          variant={localPlan.deploymentType === 'artificial_lung' ? 'eco' : 'ghost'}
+                          onClick={() => setLocalPlan(prev => ({ ...prev, deploymentType: 'artificial_lung' }))}
+                        >
+                          Artificial Lung Deployment
+                        </Button>
+                      </div>
+
+                      <label className="text-xs font-medium">Tower name</label>
+                      <input
+                        value={localPlan.towerName}
+                        onChange={(e) => setLocalPlan(prev => ({ ...prev, towerName: e.target.value }))}
+                        placeholder={localPlan.deploymentType === 'artificial_lung' ? 'e.g. AL-Delhi-Connaught Place' : 'e.g. Green Wall Sector 8'}
+                        className="w-full rounded-md border bg-background px-3 py-2 text-sm"
+                      />
+
                       <label className="text-xs font-medium">Select scale</label>
                       <div className="flex flex-wrap gap-2">
                         <Button className="flex-1 sm:flex-auto" variant={localPlan.scale === 'home' ? 'eco' : 'ghost'} onClick={() => handleScaleSelect('home')}>
@@ -361,13 +413,23 @@ const SmogTowerWizard: React.FC = () => {
                       <div key={p.id} className="flex items-center justify-between p-3 rounded-lg border">
                         <div className="min-w-0">
                           <p className="font-medium text-sm">{p.scale.replace('_', ' ')}</p>
+                          <p className="text-xs text-muted-foreground capitalize">{p.deploymentType === 'artificial_lung' ? 'Artificial Lung' : 'Smog Tower'} • {p.towerName}</p>
                           <p className="text-xs text-muted-foreground">{p.config.pothos} pothos • {p.config.bamboo} bamboo • {p.config.vetiverMeters}m vetiver</p>
                           <p className="text-xs text-muted-foreground">{p.location.address || `${p.location.lat.toFixed(3)}, ${p.location.lng.toFixed(3)}`}</p>
                         </div>
                         <div className="flex items-center gap-2">
                           <Badge className="capitalize">{p.status}</Badge>
                           {p.status === 'planned' && <Button size="sm" onClick={() => deployNow(p)}>Deploy</Button>}
-                          <Button size="sm" variant="ghost" onClick={() => { setActivePlan(p); navigate(`/smog-towers/${encodeURIComponent(p.id)}`); }}>Manage</Button>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            onClick={() => {
+                              setActivePlan(p);
+                              toast({ title: 'Plan selected', description: `${p.towerName || 'Tower'} is now active in this dashboard.` });
+                            }}
+                          >
+                            Manage
+                          </Button>
                         </div>
                       </div>
                     ))}
@@ -386,8 +448,8 @@ const SmogTowerWizard: React.FC = () => {
                   <div className="flex justify-between"><span>Watering (pothos)</span><span>Weekly</span></div>
                   <div className="flex justify-between"><span>Pruning</span><span>Monthly</span></div>
                   <div className="flex justify-between"><span>Compost top-up</span><span>Quarterly</span></div>
-                  <div className="pt-2">
-                    <Button variant="ocean" className="w-full" onClick={() => navigate('/sensors')}>Connect Low-cost Sensor</Button>
+                  <div className="pt-2 text-xs text-muted-foreground">
+                    Employee monitoring is kept on a separate dashboard. Collector submissions are shared automatically for employee genuinity checks.
                   </div>
                   <div className="pt-2 text-xs text-muted-foreground">Tip: let the vertical wall face the road; bamboo hedges are best on the roadside to trap dust.</div>
                 </div>
@@ -408,7 +470,7 @@ const SmogTowerWizard: React.FC = () => {
                       <p className="font-medium">Plant 20 pothos cuttings</p>
                       <p className="text-xs text-muted-foreground">Location: Block A • Volunteers: 3/10</p>
                     </div>
-                    <Button size="sm" onClick={() => navigate('/volunteer')}>Join</Button>
+                    <Button size="sm" onClick={() => navigate('/community')}>Join</Button>
                   </div>
 
                   <div className="flex items-center justify-between p-3 rounded-lg border">
@@ -416,7 +478,7 @@ const SmogTowerWizard: React.FC = () => {
                       <p className="font-medium">Donate pots & compost</p>
                       <p className="text-xs text-muted-foreground">Drive this weekend</p>
                     </div>
-                    <Button size="sm" variant="ghost" onClick={() => navigate('/donate')}>Donate</Button>
+                    <Button size="sm" variant="ghost" onClick={() => navigate('/community')}>Donate</Button>
                   </div>
                 </div>
               </CardContent>
@@ -434,7 +496,7 @@ const SmogTowerWizard: React.FC = () => {
                   <div className="flex justify-between"><span>Recommended plants</span><span>Pothos, Bamboo, Vetiver</span></div>
                   <Progress value={40} className="h-2" />
                   <div className="pt-2">
-                    <Button variant="eco" className="w-full" onClick={() => navigate('/share')}>Share Plan</Button>
+                    <Button variant="eco" className="w-full" onClick={() => navigate('/community')}>Share Plan</Button>
                   </div>
                 </div>
               </CardContent>

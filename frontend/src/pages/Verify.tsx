@@ -1,6 +1,4 @@
-
-
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import Navigation from '@/components/layout/Navigation';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -18,11 +16,8 @@ import {
   Calendar,
   Camera,
   AlertTriangle,
-  Search,
-  Filter,
   Eye,
-  MessageSquare,
-  History as HistoryIcon
+  MessageSquare
 } from 'lucide-react';
 import { apiFetch } from '@/lib/api';
 
@@ -96,6 +91,50 @@ type Report = {
   };
 };
 
+type DustbinData = {
+  coordinates?: { lat: number; lng: number };
+  verificationRadius?: number;
+  initialPhotoBase64?: string;
+  photoHistory?: Array<{ photo: string; updatedAt: string }>;
+};
+
+type SectionKey = 'distance' | 'ai' | 'signals' | 'images';
+type ManualWasteRow = {
+  type: string;
+  subtype: string;
+  quantity: number;
+  unitWeightGrams: number;
+};
+
+const WASTE_CATALOG: Record<string, Array<{ subtype: string; unitWeightGrams: number }>> = {
+  Plastic: [
+    { subtype: 'Water Bottle', unitWeightGrams: 15 },
+    { subtype: 'Soft Drink Bottle', unitWeightGrams: 22 },
+    { subtype: 'Food Wrapper', unitWeightGrams: 5 },
+    { subtype: 'Carry Bag', unitWeightGrams: 6 }
+  ],
+  Metal: [
+    { subtype: 'Aluminum Can', unitWeightGrams: 14 },
+    { subtype: 'Tin Can', unitWeightGrams: 28 }
+  ],
+  Glass: [
+    { subtype: 'Glass Bottle', unitWeightGrams: 250 }
+  ],
+  Paper: [
+    { subtype: 'Newspaper', unitWeightGrams: 50 },
+    { subtype: 'Cardboard', unitWeightGrams: 120 },
+    { subtype: 'Paper Cup', unitWeightGrams: 10 }
+  ],
+  Organic: [
+    { subtype: 'Food Scraps', unitWeightGrams: 120 },
+    { subtype: 'Fruit Peel', unitWeightGrams: 80 }
+  ],
+  EWaste: [
+    { subtype: 'Small Cable', unitWeightGrams: 35 },
+    { subtype: 'Charger', unitWeightGrams: 70 }
+  ]
+};
+
 const ImageViewer = ({
   src,
   open,
@@ -123,22 +162,37 @@ const ImageViewer = ({
   );
 };
 
+const toImageSrc = (img?: string | null) => {
+  if (!img) return null;
+  if (img.startsWith('http') || img.startsWith('data:')) return img;
+  return `data:image/png;base64,${img}`;
+};
+
+const sectionId = (reportId: string, key: SectionKey) => `${reportId}:${key}`;
+
 const Verify = () => {
   const userType = localStorage.getItem('userType') as 'collector' | 'employee';
+  const { toast } = useToast();
+
+  const [reports, setReports] = useState<Report[]>([]);
+  const [filterStatus, setFilterStatus] = useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
+  const [expandedReportId, setExpandedReportId] = useState<string | null>(null);
   const [selectedReport, setSelectedReport] = useState<Report | null>(null);
-  const [filterStatus, setFilterStatus] =
-    useState<'pending' | 'approved' | 'rejected' | 'all'>('pending');
+  const [openSections, setOpenSections] = useState<Record<string, boolean>>({});
+
   const [comments, setComments] = useState('');
   const [points, setPoints] = useState<number>(0);
   const [actionLoading, setActionLoading] = useState(false);
-  const [dustbinData, setDustbinData] = useState<any>(null);
-  const { toast } = useToast();
-  const [reports, setReports] = useState<Report[]>([]);
+  const [manualWasteRows, setManualWasteRows] = useState<ManualWasteRow[]>([]);
+
+  const [dustbinData, setDustbinData] = useState<DustbinData | null>(null);
+  const [latestVerifiedAfterImage, setLatestVerifiedAfterImage] = useState<string | null>(null);
+
   const [viewerOpen, setViewerOpen] = useState(false);
   const [viewerSrc, setViewerSrc] = useState<string | null>(null);
-  const [latestVerifiedDisposalImage, setLatestVerifiedDisposalImage] = useState<string | null>(null);
 
-  const openViewer = (src: string) => {
+  const openViewer = (src: string | null) => {
+    if (!src) return;
     setViewerSrc(src);
     setViewerOpen(true);
   };
@@ -149,65 +203,22 @@ const Verify = () => {
     window.open(targetUrl, '_blank', 'noopener,noreferrer');
   };
 
-  // Fetch linked dustbin data when a report is selected
-  useEffect(() => {
-    if (!selectedReport?.dustbinId) {
-      setDustbinData(null);
+  const fetchLatestVerifiedAfterImage = async (dustbinId?: string) => {
+    if (!dustbinId) {
+      setLatestVerifiedAfterImage(null);
       return;
     }
-
-    const fetchDustbin = async () => {
-      try {
-        const res = await apiFetch(`/dustbins/${selectedReport.dustbinId}`);
-        if (res.ok) {
-          const data = await res.json();
-          setDustbinData(data);
-        } else {
-          console.error("Failed to fetch dustbin details");
-          setDustbinData(null);
-        }
-      } catch (err) {
-        console.error("Failed to fetch dustbin details:", err);
-        setDustbinData(null);
+    try {
+      const res = await apiFetch(`/reports/latest-disposal-image?dustbinId=${dustbinId}`);
+      if (!res.ok) {
+        setLatestVerifiedAfterImage(null);
+        return;
       }
-    };
-    fetchDustbin();
-  }, [selectedReport]);
-
-  useEffect(() => {
-    if (!selectedReport?.dustbinId) {
-      setLatestVerifiedDisposalImage(null);
-      return;
+      const data = await res.json();
+      setLatestVerifiedAfterImage(data?.afterImageBase64 || data?.disposalImageBase64 || null);
+    } catch {
+      setLatestVerifiedAfterImage(null);
     }
-
-    const fetchLatestVerifiedDisposal = async () => {
-      try {
-        const res = await apiFetch(`/reports/latest-disposal-image?dustbinId=${selectedReport.dustbinId}`);
-        const data = await res.json();
-        setLatestVerifiedDisposalImage(data?.disposalImageBase64 || null);
-      } catch {
-        setLatestVerifiedDisposalImage(null);
-      }
-    };
-
-    fetchLatestVerifiedDisposal();
-  }, [selectedReport?.dustbinId]);
-
-  const getDistanceMeters = (
-    a?: { lat: number; lng: number },
-    b?: { lat: number; lng: number }
-  ) => {
-    if (!a || !b) return null;
-    const R = 6371e3;
-    const φ1 = a.lat * Math.PI / 180;
-    const φ2 = b.lat * Math.PI / 180;
-    const Δφ = (b.lat - a.lat) * Math.PI / 180;
-    const Δλ = (b.lng - a.lng) * Math.PI / 180;
-    const s1 = Math.sin(Δφ / 2);
-    const s2 = Math.sin(Δλ / 2);
-    const h = s1 * s1 + Math.cos(φ1) * Math.cos(φ2) * s2 * s2;
-    const c = 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
-    return R * c;
   };
 
   useEffect(() => {
@@ -219,50 +230,104 @@ const Verify = () => {
         setReports(reportsList);
       } catch (err) {
         const error = err as Error & { status?: number; message?: string };
-        console.error(error);
         if (error.status === 401) {
           localStorage.removeItem('token');
           localStorage.removeItem('user');
           localStorage.removeItem('userType');
           window.location.href = '/';
-        } else {
-          toast({
-            title: "Unable to load reports",
-            description: error.message || "Please try again later.",
-            variant: "destructive"
-          });
+          return;
         }
+        toast({
+          title: 'Unable to load reports',
+          description: error.message || 'Please try again later.',
+          variant: 'destructive'
+        });
       }
     };
-    fetchReports();
+
+    void fetchReports();
   }, [toast]);
+
+  useEffect(() => {
+    if (!selectedReport?.dustbinId) {
+      setDustbinData(null);
+      setLatestVerifiedAfterImage(null);
+      return;
+    }
+
+    const fetchDustbin = async () => {
+      try {
+        const res = await apiFetch(`/dustbins/${selectedReport.dustbinId}`);
+        if (!res.ok) {
+          setDustbinData(null);
+          return;
+        }
+        const data = await res.json();
+        setDustbinData(data);
+      } catch {
+        setDustbinData(null);
+      }
+    };
+
+    void fetchDustbin();
+    void fetchLatestVerifiedAfterImage(selectedReport.dustbinId);
+  }, [selectedReport?.dustbinId]);
 
   useEffect(() => {
     if (!selectedReport) return;
     setComments(selectedReport.verificationComment || '');
     setPoints(selectedReport.points || 0);
+    setManualWasteRows([]);
   }, [selectedReport]);
 
-  const filteredReports = reports.filter(report => {
-    if (filterStatus === 'all') return true;
-    return report.status === filterStatus;
-  });
-  const selectedThreshold =
-    selectedReport?.aiAnalysis?.verificationThresholdMeters ||
-    dustbinData?.verificationRadius ||
-    10;
-  const selectedDistance = selectedReport?.aiAnalysis?.disposalDistance;
-  const selectedWithinRange =
-    typeof selectedReport?.aiAnalysis?.withinVerificationRange === 'boolean'
-      ? selectedReport.aiAnalysis.withinVerificationRange
-      : typeof selectedDistance === 'number'
-        ? selectedDistance <= selectedThreshold
-        : false;
-  const selectedWasteItems = selectedReport?.aiAnalysis?.wasteItems || [];
-  const selectedAiTotalPoints = selectedReport?.aiAnalysis?.totalPoints || 0;
-  const selectedAiDetectedCount = selectedWasteItems.length;
-  const selectedGenuinity = selectedReport?.aiAnalysis?.genuinity;
-  const selectedObserved = selectedGenuinity?.observed;
+  const addManualWasteRow = () => {
+    const firstType = Object.keys(WASTE_CATALOG)[0];
+    const firstSubtype = WASTE_CATALOG[firstType][0];
+    setManualWasteRows((prev) => [
+      ...prev,
+      {
+        type: firstType,
+        subtype: firstSubtype.subtype,
+        quantity: 1,
+        unitWeightGrams: firstSubtype.unitWeightGrams
+      }
+    ]);
+  };
+
+  const updateManualWasteRow = (index: number, patch: Partial<ManualWasteRow>) => {
+    setManualWasteRows((prev) => {
+      const next = [...prev];
+      const current = next[index];
+      if (!current) return prev;
+      const merged = { ...current, ...patch };
+      if (patch.type && patch.type !== current.type) {
+        const firstSubtype = WASTE_CATALOG[patch.type]?.[0];
+        if (firstSubtype) {
+          merged.subtype = firstSubtype.subtype;
+          merged.unitWeightGrams = firstSubtype.unitWeightGrams;
+        }
+      }
+      if (patch.subtype && patch.subtype !== current.subtype) {
+        const subtypeMeta = WASTE_CATALOG[merged.type]?.find((s) => s.subtype === patch.subtype);
+        if (subtypeMeta) {
+          merged.unitWeightGrams = subtypeMeta.unitWeightGrams;
+        }
+      }
+      next[index] = merged;
+      return next;
+    });
+  };
+
+  const removeManualWasteRow = (index: number) => {
+    setManualWasteRows((prev) => prev.filter((_, i) => i !== index));
+  };
+
+  const filteredReports = useMemo(() => {
+    return reports.filter((report) => {
+      if (filterStatus === 'all') return true;
+      return report.status === filterStatus;
+    });
+  }, [reports, filterStatus]);
 
   const getStatusBadge = (status: ReportStatus) => {
     switch (status) {
@@ -278,19 +343,20 @@ const Verify = () => {
   };
 
   const updateReportInState = (updated: Report) => {
-    setReports(prev => prev.map(r => (r._id === updated._id ? updated : r)));
+    setReports((prev) => prev.map((r) => (r._id === updated._id ? updated : r)));
     setSelectedReport(updated);
   };
 
   const handleApprove = async (reportId: string) => {
     if (points <= 0) {
       toast({
-        title: "Points required",
-        description: "Please assign points before approving.",
-        variant: "destructive"
+        title: 'Points required',
+        description: 'Please assign points before approving.',
+        variant: 'destructive'
       });
       return;
     }
+
     try {
       setActionLoading(true);
       const res = await apiFetch(`/reports/${reportId}`, {
@@ -298,22 +364,27 @@ const Verify = () => {
         body: JSON.stringify({
           status: 'approved',
           points,
+          materialType: manualWasteRows.length
+            ? manualWasteRows.map((r) => `${r.type} > ${r.subtype} x${r.quantity}`).join(' | ')
+            : undefined,
+          wasteWeightKg: manualWasteRows.length
+            ? Number((manualWasteRows.reduce((sum, r) => sum + (r.quantity * r.unitWeightGrams), 0) / 1000).toFixed(4))
+            : undefined,
+          manualWasteEntries: manualWasteRows.length ? manualWasteRows : undefined,
           verificationComment: comments,
           verifiedBy: userType === 'employee' ? 'Government Officer' : undefined
         })
       });
       const updated = (await res.json()) as Report;
       updateReportInState(updated);
-      toast({
-        title: "Report Approved",
-        description: "The collector has been awarded points and notified."
-      });
+      await fetchLatestVerifiedAfterImage(updated?.dustbinId);
+      toast({ title: 'Report Approved', description: 'The collector has been awarded points and notified.' });
     } catch (err) {
       const error = err as Error & { message?: string };
       toast({
-        title: "Approval Failed",
-        description: error.message || "Unable to approve report",
-        variant: "destructive"
+        title: 'Approval Failed',
+        description: error.message || 'Unable to approve report',
+        variant: 'destructive'
       });
     } finally {
       setActionLoading(false);
@@ -323,9 +394,9 @@ const Verify = () => {
   const handleReject = async (reportId: string) => {
     if (!comments.trim()) {
       toast({
-        title: "Comment Required",
-        description: "Please provide a reason for rejection.",
-        variant: "destructive",
+        title: 'Comment Required',
+        description: 'Please provide a reason for rejection.',
+        variant: 'destructive',
       });
       return;
     }
@@ -342,17 +413,14 @@ const Verify = () => {
       });
       const updated = (await res.json()) as Report;
       updateReportInState(updated);
-      toast({
-        title: "Report Rejected",
-        description: "Collector has been notified about the rejection.",
-        variant: "destructive",
-      });
+      await fetchLatestVerifiedAfterImage(updated?.dustbinId);
+      toast({ title: 'Report Rejected', description: 'Collector has been notified about the rejection.', variant: 'destructive' });
     } catch (err) {
       const error = err as Error & { message?: string };
       toast({
-        title: "Rejection Failed",
-        description: error.message || "Unable to reject report",
-        variant: "destructive"
+        title: 'Rejection Failed',
+        description: error.message || 'Unable to reject report',
+        variant: 'destructive'
       });
     } finally {
       setActionLoading(false);
@@ -360,19 +428,70 @@ const Verify = () => {
   };
 
   const handleViewDetails = async (report: Report) => {
+    const id = report._id || report.id || '';
+    if (!id) return;
+
+    if (expandedReportId === id) {
+      setExpandedReportId(null);
+      setSelectedReport(null);
+      return;
+    }
+
     try {
-      const res = await apiFetch(`/reports/${report._id || report.id}`);
-      const fullReport = await res.json();
+      const res = await apiFetch(`/reports/${id}`);
+      const fullReport = (await res.json()) as Report;
       setSelectedReport(fullReport);
+      setExpandedReportId(id);
+      setOpenSections({});
     } catch (err: unknown) {
       toast({
-        title: "Failed to load report details",
-        description: (err as Error)?.message || "Please try again",
-        variant: "destructive"
+        title: 'Failed to load report details',
+        description: (err as Error)?.message || 'Please try again',
+        variant: 'destructive'
       });
       setSelectedReport(report);
+      setExpandedReportId(id);
+      setOpenSections({});
     }
   };
+
+  const isSectionOpen = (reportId: string, key: SectionKey) => Boolean(openSections[sectionId(reportId, key)]);
+  const toggleSection = (reportId: string, key: SectionKey) => {
+    const id = sectionId(reportId, key);
+    setOpenSections((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const renderImageRow = (label: string, image: string | null | undefined, extra?: ReactNode) => {
+    const src = toImageSrc(image || null);
+    return (
+      <div className="flex items-center justify-between gap-2 rounded-md border p-3 bg-background/70">
+        <div>
+          <p className="text-sm font-medium">{label}</p>
+          <p className="text-xs text-muted-foreground">{src ? 'Image available' : 'No image available'}</p>
+        </div>
+        <div className="flex gap-2">
+          {extra}
+          <Button variant="outline" size="sm" disabled={!src} onClick={() => openViewer(src)}>
+            <Eye className="h-4 w-4 mr-1" />
+            View Image
+          </Button>
+        </div>
+      </div>
+    );
+  };
+
+  const selectedThreshold = selectedReport?.aiAnalysis?.verificationThresholdMeters || dustbinData?.verificationRadius || 10;
+  const selectedDistance = selectedReport?.aiAnalysis?.disposalDistance;
+  const selectedWithinRange =
+    typeof selectedReport?.aiAnalysis?.withinVerificationRange === 'boolean'
+      ? selectedReport.aiAnalysis.withinVerificationRange
+      : typeof selectedDistance === 'number'
+        ? selectedDistance <= selectedThreshold
+        : false;
+  const selectedWasteItems = selectedReport?.aiAnalysis?.wasteItems || [];
+  const selectedAiTotalPoints = selectedReport?.aiAnalysis?.totalPoints || 0;
+  const selectedGenuinity = selectedReport?.aiAnalysis?.genuinity;
+  const selectedObserved = selectedGenuinity?.observed;
 
   return (
     <div className="min-h-screen bg-background">
@@ -380,73 +499,49 @@ const Verify = () => {
 
       <main className="lg:ml-64 p-4 sm:p-6">
         <div className="max-w-6xl mx-auto space-y-6">
-
-          {/* Header */}
           <div className="bg-gradient-eco rounded-lg p-5 sm:p-6 text-white">
-            <h1 className="text-xl sm:text-2xl font-bold mb-2">
-              Verification Center
-            </h1>
-            <p className="text-white/90 text-sm sm:text-base">
-              Review and verify waste collection reports from collectors
-            </p>
+            <h1 className="text-xl sm:text-2xl font-bold mb-2">Verification Center</h1>
+            <p className="text-white/90 text-sm sm:text-base">Review and verify waste collection reports from collectors</p>
           </div>
 
-          {/* Stats Overview */}
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4 sm:gap-6">
             <Card>
               <CardContent className="p-4 sm:p-6">
                 <div className="flex items-center gap-4">
-                  <div className="p-3 bg-eco-warning/10 rounded-full">
-                    <Clock className="h-6 w-6 text-eco-warning" />
-                  </div>
+                  <div className="p-3 bg-eco-warning/10 rounded-full"><Clock className="h-6 w-6 text-eco-warning" /></div>
                   <div>
                     <p className="text-sm text-muted-foreground">Pending Review</p>
-                    <p className="text-2xl font-bold text-eco-warning">
-                      {reports.filter(r => r.status === 'pending').length}
-                    </p>
+                    <p className="text-2xl font-bold text-eco-warning">{reports.filter((r) => r.status === 'pending').length}</p>
                   </div>
                 </div>
               </CardContent>
             </Card>
-
             <Card>
               <CardContent className="p-4 sm:p-6">
                 <div className="flex items-center gap-4">
-                  <div className="p-3 bg-eco-success/10 rounded-full">
-                    <CheckCircle className="h-6 w-6 text-eco-success" />
-                  </div>
+                  <div className="p-3 bg-eco-success/10 rounded-full"><CheckCircle className="h-6 w-6 text-eco-success" /></div>
                   <div>
                     <p className="text-sm text-muted-foreground">Approved</p>
-                    <p className="text-2xl font-bold text-eco-success">
-                      {reports.filter(r => r.status === 'approved').length}
-                    </p>
+                    <p className="text-2xl font-bold text-eco-success">{reports.filter((r) => r.status === 'approved').length}</p>
                   </div>
                 </div>
               </CardContent>
             </Card>
-
             <Card>
               <CardContent className="p-4 sm:p-6">
                 <div className="flex items-center gap-4">
-                  <div className="p-3 bg-destructive/10 rounded-full">
-                    <X className="h-6 w-6 text-destructive" />
-                  </div>
+                  <div className="p-3 bg-destructive/10 rounded-full"><X className="h-6 w-6 text-destructive" /></div>
                   <div>
                     <p className="text-sm text-muted-foreground">Rejected</p>
-                    <p className="text-2xl font-bold text-destructive">
-                      {reports.filter(r => r.status === 'rejected').length}
-                    </p>
+                    <p className="text-2xl font-bold text-destructive">{reports.filter((r) => r.status === 'rejected').length}</p>
                   </div>
                 </div>
               </CardContent>
             </Card>
-
             <Card>
               <CardContent className="p-4 sm:p-6">
                 <div className="flex items-center gap-4">
-                  <div className="p-3 bg-eco-forest-primary/10 rounded-full">
-                    <Shield className="h-6 w-6 text-eco-forest-primary" />
-                  </div>
+                  <div className="p-3 bg-eco-forest-primary/10 rounded-full"><Shield className="h-6 w-6 text-eco-forest-primary" /></div>
                   <div>
                     <p className="text-sm text-muted-foreground">Total Reports</p>
                     <p className="text-2xl font-bold">{reports.length}</p>
@@ -455,789 +550,255 @@ const Verify = () => {
               </CardContent>
             </Card>
           </div>
-          {/* Main Content */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-            {/* Reports List */}
-            <div className="lg:col-span-2 space-y-6 order-1">
+          <Card>
+            <CardContent className="p-4 sm:p-6">
+              <Select value={filterStatus} onValueChange={(v: 'pending' | 'approved' | 'rejected' | 'all') => setFilterStatus(v)}>
+                <SelectTrigger className="w-full"><SelectValue placeholder="Filter by status" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All Reports</SelectItem>
+                  <SelectItem value="pending">Pending Review</SelectItem>
+                  <SelectItem value="approved">Approved</SelectItem>
+                  <SelectItem value="rejected">Rejected</SelectItem>
+                </SelectContent>
+              </Select>
+            </CardContent>
+          </Card>
 
-              {/* Filter */}
-              <Card>
-                <CardContent className="p-4 sm:p-6">
-                  <Select
-                    value={filterStatus}
-                    onValueChange={(value: 'pending' | 'approved' | 'rejected' | 'all') =>
-                      setFilterStatus(value)
-                    }
-                  >
-                    <SelectTrigger className="w-full">
-                      <Filter className="mr-2 h-4 w-4" />
-                      <SelectValue placeholder="Filter by status" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Reports</SelectItem>
-                      <SelectItem value="pending">Pending Review</SelectItem>
-                      <SelectItem value="approved">Approved</SelectItem>
-                      <SelectItem value="rejected">Rejected</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </CardContent>
-              </Card>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2"><Shield className="h-5 w-5 text-eco-forest-primary" />Waste Collection Reports ({filteredReports.length})</CardTitle>
+              <CardDescription>Report details now expand inside each report container.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="space-y-4">
+                {filteredReports.map((report) => {
+                  const reportId = report._id || report.id || '';
+                  const isExpanded = expandedReportId === reportId && selectedReport;
+                  const activeReport = isExpanded ? selectedReport : null;
 
-              {/* Reports */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Shield className="h-5 w-5 text-eco-forest-primary" />
-                    Waste Collection Reports ({filteredReports.length})
-                  </CardTitle>
-                </CardHeader>
-
-                <CardContent>
-                  <div className="space-y-4">
-                    {filteredReports.map((report) => (
-                      <div
-                        key={report._id || report.id}
-                        className="p-4 sm:p-6 bg-muted/50 rounded-lg space-y-4"
-                      >
-
-                        {/* Header */}
-                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
-                          <div className="space-y-1">
-                            <div className="flex items-center gap-3 flex-wrap">
-                              <h3 className="font-bold text-lg">
-                                Report #{(report._id || report.id)?.toString().slice(-6)}
-                              </h3>
-                              {getStatusBadge(report.status)}
-                            </div>
-                            {report.collectorEmail && (
-                              <p className="text-muted-foreground text-sm">
-                                by {report.collectorEmail}
-                              </p>
-                            )}
+                  return (
+                    <div key={reportId} className="rounded-lg border bg-muted/40 p-4 sm:p-5 space-y-4">
+                      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
+                        <div className="space-y-1">
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h3 className="font-bold text-lg">Report #{reportId.slice(-6)}</h3>
+                            {getStatusBadge(report.status)}
+                            <Badge variant="outline" className="text-[10px]">{new Date(report.submittedAt).toLocaleString()}</Badge>
                           </div>
+                          {report.collectorEmail && <p className="text-muted-foreground text-sm">by {report.collectorEmail}</p>}
+                        </div>
+                        <Button onClick={() => handleViewDetails(report)} variant="outline" size="sm" className="w-full sm:w-auto">
+                          <Eye className="h-3 w-3 mr-1" />
+                          {isExpanded ? 'Hide Details' : 'View Details'}
+                        </Button>
+                      </div>
 
-                          <Button
-                            onClick={() => handleViewDetails(report)}
-                            variant="outline"
-                            size="sm"
-                            className="w-full sm:w-auto"
-                          >
-                            <Eye className="h-3 w-3 mr-1" />
-                            View Details
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                        <div className="rounded-md border bg-background/60 p-3">
+                          <div className="flex items-center gap-2"><MapPin className="h-3 w-3" /><span>Pickup: {report.pickupLocation ? `${report.pickupLocation.lat?.toFixed(5)}, ${report.pickupLocation.lng?.toFixed(5)}` : '—'}</span></div>
+                          <div className="mt-1 flex items-center gap-2"><MapPin className="h-3 w-3" /><span>Disposal: {report.disposalLocation ? `${report.disposalLocation.lat?.toFixed(5)}, ${report.disposalLocation.lng?.toFixed(5)}` : '—'}</span></div>
+                        </div>
+                        <div className="rounded-md border bg-background/60 p-3">
+                          <div className="flex items-center gap-2"><Calendar className="h-3 w-3" /><span>{new Date(report.submittedAt).toLocaleString()}</span></div>
+                          <div className="mt-1 text-xs text-muted-foreground">Status: {report.status}</div>
+                        </div>
+                      </div>
+
+                      {report.status === 'pending' && (
+                        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end gap-2">
+                          <Button onClick={() => handleReject(reportId)} variant="outline" size="sm" className="w-full sm:w-auto" disabled={actionLoading}>
+                            <X className="h-3 w-3 mr-1" />Reject
+                          </Button>
+                          <Button onClick={() => handleApprove(reportId)} variant="eco" size="sm" className="w-full sm:w-auto" disabled={actionLoading}>
+                            <CheckCircle className="h-3 w-3 mr-1" />Approve
                           </Button>
                         </div>
-
-                        {/* Locations */}
-                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                          <div className="space-y-2">
-                            <div className="flex items-center gap-2 text-sm">
-                              <MapPin className="h-3 w-3" />
-                              <span>
-                                Pickup:{' '}
-                                {report.pickupLocation
-                                  ? `${report.pickupLocation.lat?.toFixed(5)}, ${report.pickupLocation.lng?.toFixed(5)}`
-                                  : '—'}
-                              </span>
-                            </div>
-
-                            <div className="flex items-center gap-2 text-sm">
-                              <Calendar className="h-3 w-3" />
-                              <span>
-                                {new Date(report.submittedAt).toLocaleString()}
-                              </span>
-                            </div>
-                          </div>
-
-                          <div className="space-y-2">
-                            <div className="flex justify-between text-sm">
-                              <span>Disposal:</span>
-                              <span className="font-medium">
-                                {report.disposalLocation
-                                  ? `${report.disposalLocation.lat?.toFixed(5)}, ${report.disposalLocation.lng?.toFixed(5)}`
-                                  : '—'}
-                              </span>
-                            </div>
-
-                            {report.pickupLocation && report.disposalLocation && (
-                              <div className="flex justify-between text-xs text-muted-foreground">
-                                <span>Pickup → Disposal:</span>
-                                <span>
-                                  {Math.round(
-                                    getDistanceMeters(
-                                      report.pickupLocation,
-                                      report.disposalLocation
-                                    ) || 0
-                                  )}{' '}
-                                  m
-                                </span>
-                              </div>
-                            )}
-
-                            {typeof report.aiAnalysis?.disposalDistance === 'number' && (
-                              <div className="flex justify-between text-xs text-muted-foreground">
-                                <span>Disposal → Dustbin:</span>
-                                <span>
-                                  {Math.round(report.aiAnalysis.disposalDistance)} m
-                                </span>
-                              </div>
-                            )}
-
-                            {typeof report.aiAnalysis?.totalPoints === 'number' && (
-                              <div className="flex justify-between text-xs">
-                                <span>AI Suggested Points:</span>
-                                <Badge variant="outline">+{report.aiAnalysis.totalPoints}</Badge>
-                              </div>
-                            )}
-
-                            {typeof report.aiAnalysis?.genuinity?.isGenuine === 'boolean' && (
-                              <div className="flex justify-between text-xs">
-                                <span>ML Genuinity:</span>
-                                <Badge
-                                  variant={report.aiAnalysis.genuinity.isGenuine ? 'default' : 'destructive'}
-                                  className={report.aiAnalysis.genuinity.isGenuine ? 'bg-eco-success/10 text-eco-success' : ''}
-                                >
-                                  {report.aiAnalysis.genuinity.isGenuine ? 'Genuine' : 'Flagged'}
-                                </Badge>
-                              </div>
-                            )}
-
-                            {report.aiAnalysis?.wasteItems && report.aiAnalysis.wasteItems.length > 0 && (
-                              <div className="flex flex-wrap gap-1">
-                                {report.aiAnalysis.wasteItems.slice(0, 3).map((item, idx) => (
-                                  <Badge key={`${item.class_name}-${idx}`} variant="secondary" className="text-[10px]">
-                                    {item.class_name}
-                                  </Badge>
-                                ))}
-                              </div>
-                            )}
-
-                            {report.status === 'approved' && (
-                              <div className="flex justify-between text-sm">
-                                <span>Points Awarded:</span>
-                                <Badge variant="default">
-                                  +{report.points || 0} pts
-                                </Badge>
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Actions */}
-                        {report.status === 'pending' && (
-                          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-end pt-2 border-t gap-2">
-                            <Button
-                              onClick={() => handleReject(report._id || report.id)}
-                              variant="outline"
-                              size="sm"
-                              className="w-full sm:w-auto"
-                            >
-                              <X className="h-3 w-3 mr-1" />
-                              Reject
-                            </Button>
-                            <Button
-                              onClick={() => handleApprove(report._id || report.id)}
-                              variant="eco"
-                              size="sm"
-                              className="w-full sm:w-auto"
-                            >
-                              <CheckCircle className="h-3 w-3 mr-1" />
-                              Approve
-                            </Button>
-                          </div>
-                        )}
-
-                        {/* Verification Comment */}
-                        {(report.status === 'approved' || report.status === 'rejected') &&
-                          report.verificationComment && (
-                            <div className="pt-2 border-t">
-                              <div className="flex items-start gap-2 text-sm">
-                                <MessageSquare className="h-3 w-3 mt-1" />
-                                <div>
-                                  <p className="font-medium">
-                                    Verification Comment:
-                                  </p>
-                                  <p className="text-muted-foreground">
-                                    {report.verificationComment}
-                                  </p>
-                                  <p className="text-xs text-muted-foreground mt-1">
-                                    - {report.verifiedBy}
-                                  </p>
-                                </div>
-                              </div>
-                            </div>
-                          )}
-                      </div>
-                    ))}
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-            {/* Detailed View */}
-            <div className="space-y-6 order-2 lg:order-none">
-              {selectedReport ? (
-                <Card>
-                  <CardHeader>
-                    <CardTitle className="flex items-center gap-2">
-                      <Camera className="h-5 w-5 text-eco-forest-primary" />
-                      Report Details
-                    </CardTitle>
-                    <CardDescription>
-                      Review images and locations for Report #
-                      {(selectedReport._id || selectedReport.id)
-                        ?.toString()
-                        .slice(-6)}
-                    </CardDescription>
-                  </CardHeader>
-
-                  <CardContent className="space-y-6">
-
-                    {/* Distance Verification */}
-                    <div className="bg-muted/30 p-4 rounded-lg border">
-                      <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                        <MapPin className="h-4 w-4" />
-                        Distance Verification (10m Rule)
-                      </h3>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                        <div className="space-y-1">
-                          <p className="text-xs text-muted-foreground">Calculated Distance</p>
-                          <div className="flex items-baseline gap-2">
-                            <span className={`text-2xl font-bold ${selectedWithinRange
-                              ? 'text-eco-success'
-                              : 'text-destructive'
-                              }`}>
-                              {typeof selectedDistance === 'number' ? `${selectedDistance.toFixed(2)}m` : 'N/A'}
-                            </span>
-                          </div>
-                          <div className={`text-xs font-medium px-2 py-1 rounded inline-block ${selectedWithinRange
-                            ? 'bg-eco-success/10 text-eco-success'
-                            : 'bg-destructive/10 text-destructive'
-                            }`}>
-                            {selectedWithinRange
-                              ? `✓ Within Range (≤ ${selectedThreshold}m)`
-                              : `⚠ Out of Range (> ${selectedThreshold}m)`}
-                          </div>
-                        </div>
-                        <div className="space-y-2 text-xs overflow-hidden">
-                          <div className="flex justify-between items-center gap-2">
-                            <span className="text-muted-foreground whitespace-nowrap">Dustbin Coords:</span>
-                            <span className="font-mono truncate" title={`${dustbinData?.coordinates?.lat !== undefined
-                              ? dustbinData.coordinates.lat.toFixed(6)
-                              : '—'
-                              }, ${dustbinData?.coordinates?.lng !== undefined
-                                ? dustbinData.coordinates.lng.toFixed(6)
-                                : '—'
-                              }`}>
-                              {dustbinData?.coordinates?.lat !== undefined
-                                ? dustbinData.coordinates.lat.toFixed(6)
-                                : '—'
-                              }, {dustbinData?.coordinates?.lng !== undefined
-                                ? dustbinData.coordinates.lng.toFixed(6)
-                                : '—'
-                              }
-                            </span>
-                          </div>
-                          <div className="flex justify-between items-center gap-2">
-                            <span className="text-muted-foreground whitespace-nowrap">Report Coords:</span>
-                            <span className="font-mono truncate" title={`${selectedReport.disposalLocation?.lat !== undefined
-                              ? selectedReport.disposalLocation.lat.toFixed(6)
-                              : '—'
-                              }, ${selectedReport.disposalLocation?.lng !== undefined
-                                ? selectedReport.disposalLocation.lng.toFixed(6)
-                                : '—'
-                              }`}>
-                              {selectedReport.disposalLocation?.lat !== undefined
-                                ? selectedReport.disposalLocation.lat.toFixed(6)
-                                : '—'
-                              }, {selectedReport.disposalLocation?.lng !== undefined
-                                ? selectedReport.disposalLocation.lng.toFixed(6)
-                                : '—'
-                              }
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* AI Waste Detection */}
-                    <div className="bg-muted/30 p-4 rounded-lg border">
-                      <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                        <Shield className="h-4 w-4" />
-                        AI Waste Detection
-                      </h3>
-
-                      {selectedWasteItems.length > 0 ? (
-                        <div className="space-y-2 text-sm">
-                          {selectedWasteItems.map((item, idx) => (
-                            <div key={idx} className="flex justify-between items-center">
-                              <span className="font-medium">{item.class_name}</span>
-                              <div className="flex items-center gap-3">
-                                <span className="text-xs text-muted-foreground">
-                                  {(item.confidence * 100).toFixed(1)}%
-                                </span>
-                                <Badge variant="outline">+{item.points}</Badge>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-sm text-muted-foreground">
-                          No waste type detected by AI for this pickup image.
-                        </p>
                       )}
 
-                      <div className="flex justify-between items-center mt-3 pt-3 border-t">
-                        <span className="text-sm font-medium">Detected Types</span>
-                        <Badge variant="secondary">{selectedAiDetectedCount}</Badge>
-                      </div>
-                      <div className="flex justify-between items-center mt-2">
-                        <span className="text-sm font-medium">AI Suggested Points</span>
-                        <Badge className="bg-eco-success/10 text-eco-success">
-                          {selectedAiTotalPoints}
-                        </Badge>
-                      </div>
-                    </div>
-
-                    {/* Dustbin Signal + Genuinity */}
-                    <div className="bg-muted/30 p-4 rounded-lg border space-y-3">
-                      <h3 className="text-sm font-semibold flex items-center gap-2">
-                        <Shield className="h-4 w-4" />
-                        Dustbin Signal Verification
-                      </h3>
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
-                        <div className="p-3 rounded border bg-background/60">
-                          <p className="text-muted-foreground">Weight (kg)</p>
-                          <p className="font-medium">
-                            {selectedReport?.dustbinSignals?.weightBeforeKg ?? 0} → {selectedReport?.dustbinSignals?.weightAfterKg ?? 0}
-                          </p>
-                          <p className="text-muted-foreground mt-1">
-                            Delta: {typeof selectedObserved?.weightDeltaGrams === 'number' ? `${selectedObserved.weightDeltaGrams.toFixed(2)} g` : 'N/A'}
-                          </p>
-                        </div>
-                        <div className="p-3 rounded border bg-background/60">
-                          <p className="text-muted-foreground">Depth ({selectedReport?.dustbinSignals?.depthUnit === 'percent' ? '%' : 'meter'})</p>
-                          <p className="font-medium">
-                            {selectedReport?.dustbinSignals?.depthBefore ?? 0} → {selectedReport?.dustbinSignals?.depthAfter ?? 0}
-                          </p>
-                          <p className="text-muted-foreground mt-1">
-                            Delta: {typeof selectedObserved?.depthDeltaPercentage === 'number' ? `${selectedObserved.depthDeltaPercentage.toFixed(2)}%` : 'N/A'}
-                          </p>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between gap-3 p-3 rounded border bg-background/60">
-                        <div>
-                          <p className="text-xs text-muted-foreground">ML Genuinity</p>
-                          <p className={`text-sm font-semibold ${selectedGenuinity?.isGenuine ? 'text-eco-success' : 'text-destructive'}`}>
-                            {selectedGenuinity?.isGenuine ? 'Genuine Report' : 'Flagged Report'}
-                          </p>
-                        </div>
-                        <Badge variant={selectedGenuinity?.isGenuine ? 'default' : 'destructive'}>
-                          {selectedGenuinity?.confidenceScore ?? 0}%
-                        </Badge>
-                      </div>
-
-                      {selectedGenuinity?.reasons && selectedGenuinity.reasons.length > 0 && (
-                        <div className="space-y-1 text-xs">
-                          {selectedGenuinity.reasons.map((reason, idx) => (
-                            <p key={`${reason}-${idx}`} className="text-destructive">
-                              • {reason}
-                            </p>
-                          ))}
+                      {(report.status === 'approved' || report.status === 'rejected') && report.verificationComment && (
+                        <div className="pt-2 border-t text-sm">
+                          <div className="flex items-start gap-2">
+                            <MessageSquare className="h-3 w-3 mt-1" />
+                            <div>
+                              <p className="font-medium">Verification Comment</p>
+                              <p className="text-muted-foreground">{report.verificationComment}</p>
+                              <p className="text-xs text-muted-foreground mt-1">- {report.verifiedBy}</p>
+                            </div>
+                          </div>
                         </div>
                       )}
-                    </div>
 
-                    {/* Image History Comparison */}
-                    <div>
-                      <h3 className="text-sm font-semibold mb-3 flex items-center gap-2">
-                        <HistoryIcon className="h-4 w-4" />
-                        Visual Evidence Comparison
-                      </h3>
-                      <div className="flex flex-col gap-6">
-                        {/* 1. Initial State */}
-                        <div className="space-y-2 w-full">
-                          <div className="flex justify-between items-center">
-                            <span className="text-xs font-medium">Initial Deployment</span>
-                            <Badge variant="outline" className="text-[10px]">Reference</Badge>
+                      {isExpanded && activeReport && (
+                        <div className="border-t pt-4 space-y-3">
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <Badge variant="secondary">Report Details</Badge>
+                            <p className="text-xs text-muted-foreground">Mobile and desktop optimized expandable sections</p>
                           </div>
-                          <div className="w-full bg-muted rounded-lg overflow-hidden border relative">
-                            {dustbinData?.initialPhotoBase64 ? (
-                              <>
-                                <img
-                                  src={dustbinData.initialPhotoBase64.startsWith('data:') ? dustbinData.initialPhotoBase64 : `data:image/png;base64,${dustbinData.initialPhotoBase64}`}
-                                  alt="Initial State"
-                                  className="w-full h-auto object-contain bg-black"
-                                />
-                                <div className="flex justify-end mt-2">
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() =>
-                                      openViewer(
-                                        dustbinData.initialPhotoBase64.startsWith('http') || dustbinData.initialPhotoBase64.startsWith('data:')
-                                          ? dustbinData.initialPhotoBase64
-                                          : `data:image/png;base64,${dustbinData.initialPhotoBase64}`
-                                      )
-                                    }
-                                    className="flex items-center gap-1"
-                                  >
-                                    <Eye className="h-4 w-4" />
-                                    Maximize
-                                  </Button>
-                                </div>
-                              </>
-                            ) : (
-                              <div className="flex items-center justify-center h-full text-muted-foreground text-xs">
-                                No initial photo
+
+                          <div className="space-y-2">
+                            <div className="flex items-center justify-between rounded-md border bg-background/60 p-3">
+                              <p className="text-sm font-medium">Distance Verification (10m Rule)</p>
+                              <Button variant="outline" size="sm" onClick={() => toggleSection(reportId, 'distance')}>
+                                {isSectionOpen(reportId, 'distance') ? 'Hide' : 'View Details'}
+                              </Button>
+                            </div>
+                            {isSectionOpen(reportId, 'distance') && (
+                              <div className="rounded-md border p-3 text-sm bg-background/80">
+                                <p>Calculated Distance: <span className={`font-semibold ${selectedWithinRange ? 'text-eco-success' : 'text-destructive'}`}>{typeof selectedDistance === 'number' ? `${selectedDistance.toFixed(2)}m` : 'N/A'}</span></p>
+                                <p className="text-muted-foreground">Threshold: {selectedThreshold}m</p>
+                                <p className="text-muted-foreground">Dustbin Coordinates: {dustbinData?.coordinates ? `${dustbinData.coordinates.lat.toFixed(6)}, ${dustbinData.coordinates.lng.toFixed(6)}` : '—'}</p>
+                                <p className="text-muted-foreground">Report Disposal Coordinates: {activeReport.disposalLocation ? `${activeReport.disposalLocation.lat.toFixed(6)}, ${activeReport.disposalLocation.lng.toFixed(6)}` : '—'}</p>
+                              </div>
+                            )}
+
+                            <div className="flex items-center justify-between rounded-md border bg-background/60 p-3">
+                              <p className="text-sm font-medium">AI Waste Detection</p>
+                              <Button variant="outline" size="sm" onClick={() => toggleSection(reportId, 'ai')}>
+                                {isSectionOpen(reportId, 'ai') ? 'Hide' : 'View Details'}
+                              </Button>
+                            </div>
+                            {isSectionOpen(reportId, 'ai') && (
+                              <div className="rounded-md border p-3 text-sm bg-background/80 space-y-2">
+                                <p>Detected Types: <span className="font-semibold">{selectedWasteItems.length}</span></p>
+                                <p>AI Suggested Points: <span className="font-semibold">{selectedAiTotalPoints}</span></p>
+                                {selectedWasteItems.length > 0 ? (
+                                  <div className="flex flex-wrap gap-1">
+                                    {selectedWasteItems.map((item, idx) => (
+                                      <Badge key={`${item.class_name}-${idx}`} variant="outline">{item.class_name} ({(item.confidence * 100).toFixed(1)}%)</Badge>
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="text-muted-foreground">No waste type detected by AI for this pickup image.</p>
+                                )}
+                              </div>
+                            )}
+
+                            <div className="flex items-center justify-between rounded-md border bg-background/60 p-3">
+                              <p className="text-sm font-medium">Dustbin Signal Verification</p>
+                              <Button variant="outline" size="sm" onClick={() => toggleSection(reportId, 'signals')}>
+                                {isSectionOpen(reportId, 'signals') ? 'Hide' : 'View Details'}
+                              </Button>
+                            </div>
+                            {isSectionOpen(reportId, 'signals') && (
+                              <div className="rounded-md border p-3 text-sm bg-background/80 space-y-2">
+                                <p>Weight: {(activeReport.dustbinSignals?.weightBeforeKg ?? 0)} → {(activeReport.dustbinSignals?.weightAfterKg ?? 0)} kg</p>
+                                <p>Depth: {(activeReport.dustbinSignals?.depthBefore ?? 0)} → {(activeReport.dustbinSignals?.depthAfter ?? 0)} {activeReport.dustbinSignals?.depthUnit === 'percent' ? '%' : 'meter'}</p>
+                                <p>ML Genuinity: <span className={`font-semibold ${selectedGenuinity?.isGenuine ? 'text-eco-success' : 'text-destructive'}`}>{selectedGenuinity?.isGenuine ? 'Genuine' : 'Flagged'}</span> ({selectedGenuinity?.confidenceScore ?? 0}%)</p>
+                                <p className="text-muted-foreground">Weight Delta: {typeof selectedObserved?.weightDeltaGrams === 'number' ? `${selectedObserved.weightDeltaGrams.toFixed(2)} g` : 'N/A'}</p>
+                              </div>
+                            )}
+
+                            <div className="flex items-center justify-between rounded-md border bg-background/60 p-3">
+                              <p className="text-sm font-medium">Image Evidence</p>
+                              <Button variant="outline" size="sm" onClick={() => toggleSection(reportId, 'images')}>
+                                {isSectionOpen(reportId, 'images') ? 'Hide' : 'View Details'}
+                              </Button>
+                            </div>
+                            {isSectionOpen(reportId, 'images') && (
+                              <div className="rounded-md border p-3 bg-background/80 space-y-2">
+                                {renderImageRow('Initial Deployment', dustbinData?.initialPhotoBase64 || null)}
+                                {renderImageRow('Latest Verified (Virtual After)', latestVerifiedAfterImage || null)}
+                                {renderImageRow('Dustbin Before (Virtual)', activeReport.dustbinSignals?.beforeImageBase64 || null)}
+                                {renderImageRow('Dustbin After (Virtual)', activeReport.dustbinSignals?.afterImageBase64 || null)}
+                                {renderImageRow(
+                                  'Pickup Image',
+                                  activeReport.pickupImageBase64 || activeReport.pickupImage || null,
+                                  <Button variant="outline" size="sm" onClick={() => openVirtualDustbin(activeReport._id || activeReport.id)}>Open Virtual</Button>
+                                )}
+                                {renderImageRow('Disposal Image', activeReport.disposalImageBase64 || activeReport.disposalImage || null)}
                               </div>
                             )}
                           </div>
-                        </div>
 
-                        {/* 2. Previous Verified State */}
-                        <div className="space-y-2 w-full">
-                          <div className="flex justify-between items-center">
-                            <span className="text-xs font-medium">Latest Verified</span>
-                            <Badge variant="outline" className="text-[10px]">Most Recent Approved</Badge>
-                          </div>
-                          <div className="w-full bg-muted rounded-lg overflow-hidden border relative">
-                            {latestVerifiedDisposalImage ? (
-                              <>
-                                <img
-                                  src={latestVerifiedDisposalImage.startsWith('data:') ? latestVerifiedDisposalImage : `data:image/png;base64,${latestVerifiedDisposalImage}`}
-                                  alt="Previous State"
-                                  className="w-full h-auto object-contain bg-black"
-                                />
-                                <div className="flex justify-end mt-2">
-                                  <Button
-                                    variant="outline"
-                                    size="sm"
-                                    onClick={() =>
-                                      openViewer(
-                                        latestVerifiedDisposalImage.startsWith('http') || latestVerifiedDisposalImage.startsWith('data:')
-                                          ? latestVerifiedDisposalImage
-                                          : `data:image/png;base64,${latestVerifiedDisposalImage}`
-                                      )
-                                    }
-                                    className="flex items-center gap-1"
-                                  >
-                                    <Eye className="h-4 w-4" />
-                                    Maximize
-                                  </Button>
-                                </div>
-                              </>
-                            ) : (
-                              <div className="flex items-center justify-center h-full text-muted-foreground text-xs">
-                                No verified disposal image yet
+                          {activeReport.status === 'pending' && (
+                            <div className="space-y-3 border rounded-md p-3 bg-background/70">
+                              <div>
+                                <label className="text-sm font-medium">Points to Award</label>
+                                <Input type="number" value={points} onChange={(e) => setPoints(Number(e.target.value))} className="bg-background mt-1" />
                               </div>
-                            )}
-                          </div>
-                          {dustbinData?.photoHistory && dustbinData.photoHistory.length > 0 && (
-                            <div className="pt-2">
-                              <p className="text-[10px] text-muted-foreground mb-1 font-medium">History (Last 3)</p>
-                              <div className="flex flex-col gap-2">
-                                {[...dustbinData.photoHistory].reverse().slice(0, 3).map((hist: any, idx: number) => (
-                                  <div key={idx} className="w-full bg-muted rounded overflow-hidden border relative" title={new Date(hist.updatedAt).toLocaleDateString()}>
-                                    <img
-                                      src={hist.photo.startsWith('data:') ? hist.photo : `data:image/png;base64,${hist.photo}`}
-                                      alt={`History ${idx + 1}`}
-                                      className="w-full h-auto object-contain bg-black rounded"
+                              <div>
+                                <label className="text-sm font-medium">Comments</label>
+                                <Textarea value={comments} onChange={(e) => setComments(e.target.value)} placeholder="Add verification notes..." className="bg-background mt-1" />
+                              </div>
+                              <div className="space-y-2">
+                                <div className="flex items-center justify-between">
+                                  <label className="text-sm font-medium">Manual Waste Entry (for AI-missed items)</label>
+                                  <Button type="button" variant="outline" size="sm" onClick={addManualWasteRow}>Add Waste Type</Button>
+                                </div>
+                                {manualWasteRows.map((row, idx) => (
+                                  <div key={`${row.type}-${row.subtype}-${idx}`} className="grid grid-cols-1 md:grid-cols-5 gap-2 border rounded p-2">
+                                    <select
+                                      className="border rounded px-2 py-1 text-sm"
+                                      value={row.type}
+                                      onChange={(e) => updateManualWasteRow(idx, { type: e.target.value })}
+                                    >
+                                      {Object.keys(WASTE_CATALOG).map((type) => (
+                                        <option key={type} value={type}>{type}</option>
+                                      ))}
+                                    </select>
+                                    <select
+                                      className="border rounded px-2 py-1 text-sm"
+                                      value={row.subtype}
+                                      onChange={(e) => updateManualWasteRow(idx, { subtype: e.target.value })}
+                                    >
+                                      {(WASTE_CATALOG[row.type] || []).map((sub) => (
+                                        <option key={`${row.type}-${sub.subtype}`} value={sub.subtype}>
+                                          {sub.subtype} ({sub.unitWeightGrams}g)
+                                        </option>
+                                      ))}
+                                    </select>
+                                    <Input
+                                      type="number"
+                                      min={1}
+                                      value={row.quantity}
+                                      onChange={(e) => updateManualWasteRow(idx, { quantity: Math.max(1, Number(e.target.value) || 1) })}
+                                      placeholder="Qty"
                                     />
-                                    <div className="flex justify-end mt-2">
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() =>
-                                          openViewer(
-                                            hist.photo.startsWith('http') || hist.photo.startsWith('data:')
-                                              ? hist.photo
-                                              : `data:image/png;base64,${hist.photo}`
-                                          )
-                                        }
-                                        className="flex items-center gap-1"
-                                      >
-                                        <Eye className="h-4 w-4" />
-                                        Maximize
-                                      </Button>
-                                    </div>
+                                    <Input
+                                      type="number"
+                                      min={1}
+                                      value={row.unitWeightGrams}
+                                      onChange={(e) => updateManualWasteRow(idx, { unitWeightGrams: Math.max(1, Number(e.target.value) || row.unitWeightGrams) })}
+                                      placeholder="Unit g"
+                                    />
+                                    <Button type="button" variant="destructive" size="sm" onClick={() => removeManualWasteRow(idx)}>
+                                      Remove
+                                    </Button>
                                   </div>
                                 ))}
+                                {manualWasteRows.length > 0 && (
+                                  <p className="text-xs text-muted-foreground">
+                                    Manual estimated weight: {(manualWasteRows.reduce((sum, r) => sum + (r.quantity * r.unitWeightGrams), 0) / 1000).toFixed(3)} kg
+                                  </p>
+                                )}
                               </div>
                             </div>
                           )}
                         </div>
-
-                        {/* 3. Pickup Image */}
-                        <div className="space-y-2 w-full">
-                          <div className="flex justify-between items-center">
-                            <span className="text-xs font-medium">Dustbin Before (Virtual)</span>
-                            <Badge variant="outline" className="text-[10px]">Before Disposal</Badge>
-                          </div>
-                          <div className="w-full bg-muted rounded-lg overflow-hidden border relative">
-                            {selectedReport.dustbinSignals?.beforeImageBase64 ? (
-                              (() => {
-                                const img = selectedReport.dustbinSignals?.beforeImageBase64 || '';
-                                const src = (img.startsWith('http') || img.startsWith('data:')) ? img : `data:image/png;base64,${img}`;
-                                return (
-                                  <>
-                                    <img
-                                      src={src}
-                                      alt="Dustbin Before"
-                                      className="w-full h-auto object-contain bg-black"
-                                    />
-                                    <div className="flex justify-end mt-2">
-                                      <Button variant="outline" size="sm" onClick={() => openViewer(src)} className="flex items-center gap-1">
-                                        <Eye className="h-4 w-4" />
-                                        Maximize
-                                      </Button>
-                                    </div>
-                                  </>
-                                );
-                              })()
-                            ) : (
-                              <div className="flex items-center justify-center h-full text-muted-foreground text-xs">
-                                No virtual dustbin before image
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* 4. Dustbin After Image */}
-                        <div className="space-y-2 w-full">
-                          <div className="flex justify-between items-center">
-                            <span className="text-xs font-medium">Dustbin After (Virtual)</span>
-                            <Badge variant="outline" className="text-[10px]">After Disposal</Badge>
-                          </div>
-                          <div className="w-full bg-muted rounded-lg overflow-hidden border relative">
-                            {selectedReport.dustbinSignals?.afterImageBase64 ? (
-                              (() => {
-                                const img = selectedReport.dustbinSignals?.afterImageBase64 || '';
-                                const src = (img.startsWith('http') || img.startsWith('data:')) ? img : `data:image/png;base64,${img}`;
-                                return (
-                                  <>
-                                    <img
-                                      src={src}
-                                      alt="Dustbin After"
-                                      className="w-full h-auto object-contain bg-black"
-                                    />
-                                    <div className="flex justify-end mt-2">
-                                      <Button variant="outline" size="sm" onClick={() => openViewer(src)} className="flex items-center gap-1">
-                                        <Eye className="h-4 w-4" />
-                                        Maximize
-                                      </Button>
-                                    </div>
-                                  </>
-                                );
-                              })()
-                            ) : (
-                              <div className="flex items-center justify-center h-full text-muted-foreground text-xs">
-                                No virtual dustbin after image
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* 5. Pickup Image */}
-                        <div className="space-y-2 w-full">
-                          <div className="flex justify-between items-center">
-                            <span className="text-xs font-medium">Pickup Image</span>
-                            <Badge variant="secondary" className="text-[10px]">Collection</Badge>
-                          </div>
-                          <div className="w-full bg-muted rounded-lg overflow-hidden border relative">
-                            {(selectedReport.pickupImageBase64 || selectedReport.pickupImage) ? (
-                              (() => {
-                                const img = selectedReport.pickupImageBase64 || selectedReport.pickupImage || '';
-                                const src = (img.startsWith('http') || img.startsWith('data:')) ? img : `data:image/png;base64,${img}`;
-                                return (
-                                  <>
-                                    <img
-                                      src={src}
-                                      alt="Pickup Evidence"
-                                      className="w-full h-auto object-contain bg-black"
-                                    />
-                                    <div className="flex justify-end mt-2">
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => openViewer(src)}
-                                        className="flex items-center gap-1"
-                                      >
-                                        <Eye className="h-4 w-4" />
-                                        Maximize
-                                      </Button>
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => openVirtualDustbin(selectedReport._id || selectedReport.id)}
-                                        className="flex items-center gap-1 ml-2"
-                                      >
-                                        Request Virtual Dustbin
-                                      </Button>
-                                    </div>
-                                  </>
-                                );
-                              })()
-                            ) : (
-                              <div className="flex items-center justify-center h-full text-muted-foreground text-xs">
-                                No pickup photo
-                              </div>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* 6. Disposal Image (Report Image) */}
-                        <div className="space-y-2 w-full">
-                          <div className="flex justify-between items-center">
-                            <span className="text-xs font-medium">Disposal Image</span>
-                            <Badge variant={selectedReport.status === 'approved' ? 'default' : 'secondary'} className="text-[10px]">
-                              {selectedReport.status === 'pending' ? 'New Evidence' : 'Reported'}
-                            </Badge>
-                          </div>
-                          <div className="w-full bg-muted rounded-lg overflow-hidden border-2 border-primary relative">
-                            {(selectedReport.disposalImageBase64 || selectedReport.disposalImage) ? (
-                              (() => {
-                                const img = selectedReport.disposalImageBase64 || selectedReport.disposalImage || '';
-                                const src = (img.startsWith('http') || img.startsWith('data:')) ? img : `data:image/png;base64,${img}`;
-                                return (
-                                  <>
-                                    <img
-                                      src={src}
-                                      alt="Disposal Evidence"
-                                      className="w-full h-auto object-contain bg-black"
-                                    />
-                                    <div className="flex justify-end mt-2">
-                                      <Button
-                                        variant="outline"
-                                        size="sm"
-                                        onClick={() => openViewer(src)}
-                                        className="flex items-center gap-1"
-                                      >
-                                        <Eye className="h-4 w-4" />
-                                        Maximize
-                                      </Button>
-                                    </div>
-                                  </>
-                                );
-                              })()
-                            ) : (
-                              <div className="flex items-center justify-center h-full text-muted-foreground text-xs">
-                                No disposal photo
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
+                      )}
                     </div>
+                  );
+                })}
+              </div>
+            </CardContent>
+          </Card>
 
-                    {/* Action Form */}
-                    {selectedReport.status === 'pending' && (
-                      <div className="space-y-4 pt-4 border-t">
-                        <div className="space-y-2">
-                          <label className="text-sm font-medium">Points to Award</label>
-                          <Input
-                            type="number"
-                            value={points}
-                            onChange={(e) => setPoints(Number(e.target.value))}
-                            className="bg-background"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <label className="text-sm font-medium">Comments</label>
-                          <Textarea
-                            value={comments}
-                            onChange={(e) => setComments(e.target.value)}
-                            placeholder="Add verification notes..."
-                            className="bg-background"
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-3">
-                          <Button
-                            onClick={() => handleReject(selectedReport._id || selectedReport.id!)}
-                            disabled={actionLoading}
-                            variant="destructive"
-                            className="w-full"
-                          >
-                            Reject
-                          </Button>
-                          <Button
-                            onClick={() => handleApprove(selectedReport._id || selectedReport.id!)}
-                            disabled={actionLoading}
-                            className="w-full bg-eco-success hover:bg-eco-success/90"
-                          >
-                            Approve
-                          </Button>
-                        </div>
-                      </div>
-                    )}
-
-                    {/* Read Only View for Processed Reports */}
-                    {selectedReport.status !== 'pending' && (
-                      <div className="bg-muted/30 p-6 rounded-lg border">
-                        <div className="flex items-start gap-4">
-                          <div className="flex-1">
-                            <p className="text-sm font-medium text-muted-foreground">Verification Comment</p>
-                            <p className="mt-1">{selectedReport.verificationComment || "No comments"}</p>
-                          </div>
-                          <div className="text-right">
-                            <p className="text-sm font-medium text-muted-foreground">Awarded Points</p>
-                            <p className="text-2xl font-bold text-primary">{selectedReport.points}</p>
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              ) : (
-                <Card>
-                  <CardContent className="p-6 text-center">
-                    <Shield className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                    <h3 className="font-medium mb-2">No Report Selected</h3>
-                    <p className="text-sm text-muted-foreground">
-                      Select a report from the list to view detailed information
-                      and verification options.
-                    </p>
-                  </CardContent>
-                </Card>
-              )}
-
-              {/* Guidelines */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <AlertTriangle className="h-5 w-5 text-eco-warning" />
-                    Verification Guidelines
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-3 text-sm">
-                  <div className="flex items-start gap-2">
-                    <div className="w-2 h-2 bg-eco-success rounded-full mt-2"></div>
-                    <span>AI confidence should be above 85%</span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <div className="w-2 h-2 bg-eco-success rounded-full mt-2"></div>
-                    <span>GPS accuracy should be within 2 meters</span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <div className="w-2 h-2 bg-eco-success rounded-full mt-2"></div>
-                    <span>Images should clearly show waste and location</span>
-                  </div>
-                  <div className="flex items-start gap-2">
-                    <div className="w-2 h-2 bg-eco-success rounded-full mt-2"></div>
-                    <span>Waste type should match the disposal bin type</span>
-                  </div>
-                </CardContent>
-              </Card>
-            </div>
-          </div>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2"><AlertTriangle className="h-5 w-5 text-eco-warning" />Verification Guidelines</CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2 text-sm">
+              <p>AI confidence should be above 85%</p>
+              <p>GPS accuracy should be within 2 meters</p>
+              <p>Images should clearly show waste and location</p>
+              <p>Waste type should match the disposal bin type</p>
+            </CardContent>
+          </Card>
         </div>
       </main>
-      <ImageViewer
-        src={viewerSrc}
-        open={viewerOpen}
-        onClose={() => setViewerOpen(false)}
-      />
+
+      <ImageViewer src={viewerSrc} open={viewerOpen} onClose={() => setViewerOpen(false)} />
     </div>
   );
 };

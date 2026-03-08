@@ -11,6 +11,28 @@ import { useToast } from '@/hooks/use-toast';
 import { apiFetch } from '@/lib/api';
 import { getReliableLocation } from '@/lib/location';
 
+type CollectorIncident = {
+  _id: string;
+  category: string;
+  description?: string;
+  status: string;
+  urgency: string;
+  coordinates: { lat: number; lng: number };
+  imageBase64: string;
+  updatedAt: string;
+  assignedTo?: { _id?: string; name?: string; email?: string } | string | null;
+  timeline?: {
+    assignedAt?: string;
+    startedAt?: string;
+    completedAt?: string;
+    resolutionMinutes?: number;
+  };
+  employeeLiveLocation?: {
+    coordinates: { lat: number; lng: number };
+    updatedAt: string;
+  } | null;
+};
+
 const categories = [
   { value: 'pothole', label: 'Capture potholes' },
   { value: 'accident', label: 'Capture car, bike, truck accident' },
@@ -49,13 +71,86 @@ export default function CaptureIncident() {
   const [manualLat, setManualLat] = useState('');
   const [manualLng, setManualLng] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [incidents, setIncidents] = useState<Array<{ _id: string; category: string; description?: string; status: string; urgency: string; coordinates: { lat: number; lng: number }; imageBase64: string; updatedAt: string }>>([]);
+  const [incidents, setIncidents] = useState<CollectorIncident[]>([]);
   const [loadingList, setLoadingList] = useState(false);
+
+  const haversineMeters = (a: { lat: number; lng: number }, b: { lat: number; lng: number }) => {
+    const R = 6371e3;
+    const toRad = (x: number) => x * Math.PI / 180;
+    const dLat = toRad(b.lat - a.lat);
+    const dLng = toRad(b.lng - a.lng);
+    const lat1 = toRad(a.lat);
+    const lat2 = toRad(b.lat);
+    const s = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.atan2(Math.sqrt(s), Math.sqrt(1 - s));
+  };
+
+  const formatDuration = (minutes?: number) => {
+    if (!minutes || minutes < 1) return 'N/A';
+    if (minutes < 60) return `${minutes} min`;
+    const h = Math.floor(minutes / 60);
+    const m = minutes % 60;
+    return `${h}h ${m}m`;
+  };
+
+  const isWithinWorkHours = (date: Date) => {
+    const hour = date.getHours();
+    return hour >= 9 && hour < 17;
+  };
+  const isWorkTimeNow = () => isWithinWorkHours(new Date());
+
+  const calculateWorkMinutesBetween = (start: Date, end: Date) => {
+    if (end <= start) return 0;
+    let totalMs = 0;
+    let cursor = new Date(start);
+
+    while (cursor < end) {
+      const dayStart = new Date(cursor);
+      dayStart.setHours(9, 0, 0, 0);
+      const dayEnd = new Date(cursor);
+      dayEnd.setHours(17, 0, 0, 0);
+
+      const rangeStart = new Date(Math.max(cursor.getTime(), dayStart.getTime()));
+      const rangeEnd = new Date(Math.min(end.getTime(), dayEnd.getTime()));
+
+      if (rangeEnd > rangeStart) {
+        totalMs += rangeEnd.getTime() - rangeStart.getTime();
+      }
+
+      const nextDay = new Date(cursor);
+      nextDay.setDate(nextDay.getDate() + 1);
+      nextDay.setHours(0, 0, 0, 0);
+      cursor = nextDay;
+    }
+
+    return Math.max(0, Math.round(totalMs / 60000));
+  };
+
+  const getWorkMinutesPassed = (incident: CollectorIncident) => {
+    const start = incident.timeline?.startedAt || incident.timeline?.assignedAt;
+    if (!start) return 0;
+    const startDate = new Date(start);
+    const endDate = incident.timeline?.completedAt ? new Date(incident.timeline.completedAt) : new Date();
+    return calculateWorkMinutesBetween(startDate, endDate);
+  };
+
+  const isEmployeeOnline = (incident: CollectorIncident) => {
+    if (!incident.employeeLiveLocation?.updatedAt) return false;
+    const updatedAt = new Date(incident.employeeLiveLocation.updatedAt).getTime();
+    const isFresh = Date.now() - updatedAt <= 2 * 60 * 1000;
+    return isFresh && isWithinWorkHours(new Date());
+  };
+
+  const getAssignedEmployeeName = (incident: CollectorIncident) => {
+    if (!incident.assignedTo) return 'Not assigned';
+    if (typeof incident.assignedTo === 'string') return 'Assigned';
+    return incident.assignedTo.name || incident.assignedTo.email || 'Assigned';
+  };
 
   const loadIncidents = async () => {
     try {
       setLoadingList(true);
-      const res = await apiFetch('/incidents', { skipAuth: true });
+      const res = await apiFetch('/incidents');
       const data = await res.json();
       setIncidents(Array.isArray(data) ? data : []);
     } catch (err) {
@@ -151,9 +246,8 @@ export default function CaptureIncident() {
     }
     try {
       setSubmitting(true);
-      await apiFetch('/incidents', {
+      const res = await apiFetch('/incidents', {
         method: 'POST',
-        skipAuth: true,
         body: JSON.stringify({
           category,
           description,
@@ -162,7 +256,17 @@ export default function CaptureIncident() {
           urgency,
         })
       });
-      toast({ title: 'Incident reported', description: 'Thank you for your report.' });
+      const created: CollectorIncident = await res.json();
+      const assigneeName =
+        created?.assignedTo && typeof created.assignedTo === 'object'
+          ? (created.assignedTo.name || created.assignedTo.email || 'an employee')
+          : null;
+      toast({
+        title: 'Incident reported',
+        description: assigneeName
+          ? `Connected instantly to ${assigneeName}.`
+          : 'Reported successfully. Waiting for employee assignment.',
+      });
       setImage(null);
       setDescription('');
       setManualLat('');
@@ -340,6 +444,45 @@ export default function CaptureIncident() {
                         <div className="text-xs text-muted-foreground mt-1">
                           {new Date(inc.updatedAt).toLocaleString()} • {inc.coordinates.lat.toFixed(4)}, {inc.coordinates.lng.toFixed(4)}
                         </div>
+                        <div className="text-xs text-muted-foreground mt-1">
+                          Assigned employee: <span className="font-medium">{getAssignedEmployeeName(inc)}</span>
+                        </div>
+                        {!isWorkTimeNow() && inc.assignedTo && (
+                          <div className="mt-2 rounded-lg border border-amber-200 bg-gradient-to-r from-amber-50 to-orange-50 px-3 py-2 text-xs text-amber-900">
+                            Worker work time is 9:00 AM to 5:00 PM. The employee will join you at 9:00 AM.
+                          </div>
+                        )}
+                        {isWorkTimeNow() && inc.employeeLiveLocation?.coordinates && (
+                          (
+                            <div className="text-xs text-muted-foreground mt-1">
+                              Employee live location: {inc.employeeLiveLocation.coordinates.lat.toFixed(5)}, {inc.employeeLiveLocation.coordinates.lng.toFixed(5)}
+                              {' '}• Distance to incident: {(haversineMeters(inc.employeeLiveLocation.coordinates, inc.coordinates) / 1000).toFixed(2)} km
+                              {' '}• Updated: {new Date(inc.employeeLiveLocation.updatedAt).toLocaleTimeString()}
+                              {' '}• Status: <span className={isEmployeeOnline(inc) ? 'text-green-600 font-medium' : 'text-amber-600 font-medium'}>
+                                {isEmployeeOnline(inc) ? 'Online (On shift)' : 'Offline / Off shift'}
+                              </span>
+                              {' '}• <a
+                                href={`https://www.google.com/maps/dir/?api=1&origin=${inc.employeeLiveLocation.coordinates.lat},${inc.employeeLiveLocation.coordinates.lng}&destination=${inc.coordinates.lat},${inc.coordinates.lng}&travelmode=driving`}
+                                target="_blank"
+                                rel="noreferrer"
+                                className="underline text-eco-forest-primary"
+                              >
+                                Navigate employee → incident
+                              </a>
+                            </div>
+                          )
+                        )}
+                        {inc.status === 'resolved' || inc.status === 'dismissed' ? (
+                          <div className="text-xs text-muted-foreground mt-1">
+                            Completed at: {inc.timeline?.completedAt ? new Date(inc.timeline.completedAt).toLocaleString() : 'N/A'}
+                            {' '}• Work-time used (9AM-5PM): {formatDuration(getWorkMinutesPassed(inc))}
+                          </div>
+                        ) : (
+                          <div className="text-xs text-muted-foreground mt-1">
+                            Current state: {inc.status.replace(/_/g, ' ')} (incomplete)
+                            {' '}• Work-time passed (9AM-5PM): {formatDuration(getWorkMinutesPassed(inc))}
+                          </div>
+                        )}
                       </div>
                     </div>
                   ))}

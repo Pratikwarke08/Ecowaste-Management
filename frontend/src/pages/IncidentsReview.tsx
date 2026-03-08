@@ -23,6 +23,10 @@ export default function IncidentsReview() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   const [urgencyFilter, setUrgencyFilter] = useState<string>('all');
   const [categoryFilter, setCategoryFilter] = useState<string>('all');
+  const [liveShareEnabled, setLiveShareEnabled] = useState(false);
+  const [availableHelpers, setAvailableHelpers] = useState<Array<{ _id: string; name?: string; email?: string }>>([]);
+  const [helperSelection, setHelperSelection] = useState<Record<string, string>>({});
+  const [requestingHelpFor, setRequestingHelpFor] = useState<string | null>(null);
 
   useEffect(() => {
     getReliableLocation()
@@ -50,10 +54,58 @@ export default function IncidentsReview() {
     }
   };
 
+  const loadAvailableHelpers = async () => {
+    try {
+      const res = await apiFetch('/incidents/support/employees');
+      const data = await res.json();
+      setAvailableHelpers(Array.isArray(data) ? data : []);
+    } catch {
+      setAvailableHelpers([]);
+    }
+  };
+
   useEffect(() => {
     loadIncidents();
+    loadAvailableHelpers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [statusFilter, urgencyFilter, categoryFilter]);
+
+  useEffect(() => {
+    if (!selected) {
+      setLiveShareEnabled(false);
+      return;
+    }
+    if (selected.status === 'resolved' || selected.status === 'dismissed') {
+      setLiveShareEnabled(false);
+      return;
+    }
+
+    let stopped = false;
+    let intervalId: number | undefined;
+
+    const pushLiveLocation = async () => {
+      try {
+        const coords = await getReliableLocation();
+        if (stopped) return;
+        setUserLocation(coords);
+        await apiFetch(`/incidents/${selected._id}/live-location`, {
+          method: 'PATCH',
+          body: JSON.stringify({ coordinates: coords }),
+        });
+        if (!stopped) setLiveShareEnabled(true);
+      } catch {
+        if (!stopped) setLiveShareEnabled(false);
+      }
+    };
+
+    pushLiveLocation();
+    intervalId = window.setInterval(pushLiveLocation, 15000);
+
+    return () => {
+      stopped = true;
+      if (intervalId) window.clearInterval(intervalId);
+    };
+  }, [selected]);
 
   const updateStatus = async (incId: string, status: string) => {
     try {
@@ -73,6 +125,28 @@ export default function IncidentsReview() {
     } catch (err) {
       console.error(err);
       toast({ title: 'Award failed', description: 'Could not award points', variant: 'destructive' });
+    }
+  };
+
+  const requestHelp = async (incId: string) => {
+    const helperEmployeeId = helperSelection[incId];
+    if (!helperEmployeeId) {
+      toast({ title: 'Select employee', description: 'Choose an employee to request support.', variant: 'destructive' });
+      return;
+    }
+    try {
+      setRequestingHelpFor(incId);
+      await apiFetch(`/incidents/${incId}/request-help`, {
+        method: 'POST',
+        body: JSON.stringify({ helperEmployeeId }),
+      });
+      toast({ title: 'Support requested', description: 'Helper employee has been joined to this incident.' });
+      setHelperSelection((prev) => ({ ...prev, [incId]: '' }));
+      await loadIncidents();
+    } catch (err) {
+      toast({ title: 'Request failed', description: (err as Error)?.message || 'Could not request support', variant: 'destructive' });
+    } finally {
+      setRequestingHelpFor(null);
     }
   };
 
@@ -105,14 +179,11 @@ export default function IncidentsReview() {
   const items = useMemo(() => incidents, [incidents]);
   // Active: only brand new incidents that have not been reviewed yet
   const activeIncidents = useMemo(
-    () => items.filter(i => i.status === 'reported'),
+    () => items.filter(i => i.status === 'reported' || i.status === 'acknowledged' || i.status === 'in_progress'),
     [items]
   );
-  // History: everything that has been reviewed by an employee (i.e. left the initial 'reported' state),
-  // including acknowledged / in_progress / resolved / dismissed. This way employee can still
-  // see and update incidents they have already touched, while closed ones just show final status.
   const historyIncidents = useMemo(
-    () => items.filter(i => i.status !== 'reported'),
+    () => items.filter(i => i.status === 'resolved' || i.status === 'dismissed'),
     [items]
   );
 
@@ -124,6 +195,7 @@ export default function IncidentsReview() {
           <div className="bg-gradient-ocean rounded-lg p-6 text-white animate-fade-in">
             <h1 className="text-2xl font-bold mb-2">Incident Review</h1>
             <p className="text-white/90">Monitor and act on reported incidents with real-time map and details.</p>
+            <p className="text-white/85 text-sm mt-2">Live location sharing: {liveShareEnabled ? 'ON (assigned incident)' : 'OFF'}</p>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -202,6 +274,26 @@ export default function IncidentsReview() {
                         </div>
                         <div className="text-xs text-muted-foreground truncate">{i.description || 'No description'}</div>
                         <div className="text-xs text-muted-foreground mt-1">{i.coordinates.lat.toFixed(5)}, {i.coordinates.lng.toFixed(5)}</div>
+                        {userLocation && (
+                          <a
+                            href={`https://www.google.com/maps/dir/?api=1&origin=${userLocation.lat},${userLocation.lng}&destination=${i.coordinates.lat},${i.coordinates.lng}&travelmode=driving`}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="text-xs underline text-eco-forest-primary mt-1 inline-block"
+                          >
+                            Navigate employee → incident
+                          </a>
+                        )}
+                        {Array.isArray(i.helperEmployees) && i.helperEmployees.length > 0 && (
+                          <div className="text-xs text-muted-foreground mt-1">
+                            Helpers joined: {i.helperEmployees.map((h) => {
+                              if (h?.employee && typeof h.employee === 'object') {
+                                return h.employee.name || h.employee.email || 'Employee';
+                              }
+                              return 'Employee';
+                            }).join(', ')}
+                          </div>
+                        )}
                         <div className="flex flex-wrap items-center gap-2 mt-2">
                           <Button size="sm" variant="outline" onClick={() => setSelected(i)}>Focus on Map</Button>
                           <Button size="sm" onClick={() => updateStatus(i._id, 'acknowledged')}>Acknowledge</Button>
@@ -218,6 +310,29 @@ export default function IncidentsReview() {
                               {analyzingIncidentId === i._id ? 'Analyzing…' : 'Analyze Pothole with AI'}
                             </Button>
                           )}
+                          <Select
+                            value={helperSelection[i._id] || ''}
+                            onValueChange={(value) => setHelperSelection((prev) => ({ ...prev, [i._id]: value }))}
+                          >
+                            <SelectTrigger className="w-[200px] h-8">
+                              <SelectValue placeholder="Select helper employee" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {availableHelpers.map((emp) => (
+                                <SelectItem key={emp._id} value={emp._id}>
+                                  {emp.name || emp.email || 'Employee'}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => requestHelp(i._id)}
+                            disabled={requestingHelpFor === i._id || availableHelpers.length === 0}
+                          >
+                            {requestingHelpFor === i._id ? 'Requesting…' : 'Request Help'}
+                          </Button>
                         </div>
                       </div>
                     </div>
@@ -254,6 +369,9 @@ export default function IncidentsReview() {
                           </div>
                           <div className="text-xs text-muted-foreground truncate">{i.description || 'No description'}</div>
                           <div className="text-xs text-muted-foreground mt-1">Updated {new Date((i as Incident & { updatedAt?: string }).updatedAt || Date.now()).toLocaleString()}</div>
+                          {i.timeline?.resolutionMinutes ? (
+                            <div className="text-xs text-muted-foreground mt-1">Resolved in {i.timeline.resolutionMinutes} min</div>
+                          ) : null}
                           <div className="mt-2 flex flex-wrap gap-2 items-center">
                             <Button size="sm" variant="outline" onClick={() => openHistoryDetails(i)}>View Details</Button>
                             {/* Allow further status changes for non-final incidents */}

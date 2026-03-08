@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import LoginForm from '@/components/auth/LoginForm';
 import { bootstrapThemeFromStorage, applyTheme } from '@/lib/theme';
+import { UserRole } from '@/lib/roles';
 
 const Index = () => {
   const navigate = useNavigate();
@@ -15,7 +16,7 @@ const Index = () => {
     };
   }, []);
 
-  const handleLogin = (userType: 'collector' | 'employee', _userData: { name?: string; email: string }) => {
+  const handleLogin = (userType: UserRole, _userData: { name?: string; email: string }) => {
     // Store user type in localStorage for demo purposes
     localStorage.setItem('userType', userType);
     navigate('/dashboard');

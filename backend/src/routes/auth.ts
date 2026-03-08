@@ -8,6 +8,14 @@ import { authenticate, AuthenticatedRequest } from "../middleware/auth";
 const router = express.Router();
 
 const JWT_SECRET = process.env.JWT_SECRET || "dev_secret_change_me";
+const ALLOWED_ROLES = new Set([
+  "collector",
+  "employee",
+  "recycling_logistics",
+  "waste_buyer",
+  "government_officer",
+  "carbon_auditor"
+]);
 
 function issueToken(user: any) {
   return jwt.sign(
@@ -33,11 +41,12 @@ router.post("/signup", async (req, res) => {
       return res.status(409).json({ error: "Email already registered" });
     }
     const passwordHash = await bcrypt.hash(password, 10);
+    const selectedRole = typeof role === "string" && ALLOWED_ROLES.has(role) ? role : "collector";
     const user = await User.create({
       name,
       email,
       passwordHash,
-      role: role === "employee" ? "employee" : "collector",
+      role: selectedRole,
       lastLoginAt: new Date(),
       lastActiveAt: new Date()
     });
@@ -117,5 +126,4 @@ router.post("/logout", authenticate, async (req: AuthenticatedRequest, res) => {
 });
 
 export default router;
-
 

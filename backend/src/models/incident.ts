@@ -8,6 +8,33 @@ const coordinateSchema = new mongoose.Schema(
   { _id: false }
 );
 
+const employeeLiveLocationSchema = new mongoose.Schema(
+  {
+    coordinates: { type: coordinateSchema, required: true },
+    updatedAt: { type: Date, default: Date.now, index: true },
+  },
+  { _id: false }
+);
+
+const timelineSchema = new mongoose.Schema(
+  {
+    assignedAt: { type: Date },
+    startedAt: { type: Date },
+    completedAt: { type: Date },
+    resolutionMinutes: { type: Number },
+  },
+  { _id: false }
+);
+
+const helperEmployeeSchema = new mongoose.Schema(
+  {
+    employee: { type: mongoose.Schema.Types.ObjectId, ref: "User", required: true },
+    requestedAt: { type: Date, default: Date.now },
+    joinedAt: { type: Date, default: Date.now },
+  },
+  { _id: false }
+);
+
 const incidentSchema = new mongoose.Schema({
   category: {
     type: String,
@@ -33,7 +60,10 @@ const incidentSchema = new mongoose.Schema({
   status: { type: String, enum: ["reported", "acknowledged", "in_progress", "resolved", "dismissed"], default: "reported", index: true },
   rewarded: { type: Boolean, default: false, index: true },
   reporter: { type: mongoose.Schema.Types.ObjectId, ref: "User", index: true },
-  assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: "User" },
+  assignedTo: { type: mongoose.Schema.Types.ObjectId, ref: "User", index: true },
+  helperEmployees: { type: [helperEmployeeSchema], default: [] },
+  employeeLiveLocation: { type: employeeLiveLocationSchema, default: null },
+  timeline: { type: timelineSchema, default: {} },
   notes: { type: String, default: "" },
   createdAt: { type: Date, default: Date.now, index: true },
   updatedAt: { type: Date, default: Date.now, index: true },

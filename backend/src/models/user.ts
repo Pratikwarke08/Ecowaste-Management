@@ -13,7 +13,19 @@ const userSchema = new mongoose.Schema({
   name: { type: String },
   email: { type: String, required: true, unique: true, index: true },
   passwordHash: { type: String, required: true },
-  role: { type: String, enum: ["collector", "employee"], default: "collector", index: true },
+  role: {
+    type: String,
+    enum: [
+      "collector",
+      "employee",
+      "recycling_logistics",
+      "waste_buyer",
+      "government_officer",
+      "carbon_auditor"
+    ],
+    default: "collector",
+    index: true
+  },
   profile: { type: profileSchema, default: {} },
   settings: {
     type: mongoose.Schema.Types.Mixed,
@@ -29,5 +41,4 @@ const userSchema = new mongoose.Schema({
 });
 
 export const User = mongoose.model("User", userSchema);
-
 

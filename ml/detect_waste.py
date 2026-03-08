@@ -1,90 +1,86 @@
 from ultralytics import YOLO
-import sys
-import json
-from pathlib import Path
+import cv2
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-MODEL_PATH = SCRIPT_DIR / "best.pt"
-model = YOLO(str(MODEL_PATH))
+# Load trained model
+model = YOLO("ecowaste_model.pt")
 
-POINTS = {
-    "ConstructionWaste": 8,
-    "GeneralWaste": 5,
-    "GreenWaste": 4,
-    "HazardousWaste": 20,
-    "MedicalWaste": 25,
-    "OrganicWaste": 3,
-    "RecyclebleWaste": 10
+# Average weights (grams)
+weights = {
+    "battery": 24,
+    "can": 14,
+    "cardboard": 120,
+    "drink carton": 32,
+    "glass bottle": 200,
+    "paper": 5,
+    "plastic bag": 6,
+    "plastic bottle": 18,
+    "plastic bottle cap": 2,
+    "pop tab": 1
 }
 
-# Approximate per-item weights in grams (min, max).
-# RecyclebleWaste includes items such as plastic bottles.
-WEIGHT_GRAMS_RANGE = {
-    "ConstructionWaste": (500, 5000),
-    "GeneralWaste": (100, 1000),
-    "GreenWaste": (50, 500),
-    "HazardousWaste": (200, 1500),
-    "MedicalWaste": (50, 500),
-    "OrganicWaste": (80, 600),
-    "RecyclebleWaste": (50, 100)
+# Points for each waste type
+points = {
+    "battery": 15,
+    "can": 8,
+    "cardboard": 6,
+    "drink carton": 6,
+    "glass bottle": 10,
+    "paper": 2,
+    "plastic bag": 4,
+    "plastic bottle": 7,
+    "plastic bottle cap": 1,
+    "pop tab": 1
 }
 
+cap = cv2.VideoCapture(0)
 
-def detect_waste(image_path):
-    results = model(image_path, conf=0.25, verbose=False)
+while True:
 
-    waste_items = []
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    results = model(frame)
+
+    detected_counts = {}
+    total_weight = 0
     total_points = 0
-    estimated_min_weight_grams = 0
-    estimated_max_weight_grams = 0
 
     for r in results:
         boxes = r.boxes
-        if boxes is None:
-            continue
 
-        for i in range(len(boxes.cls)):
-            class_id = int(boxes.cls[i])
-            class_name = model.names[class_id]
-            confidence = float(boxes.conf[i])
+        for box in boxes:
+            class_id = int(box.cls)
+            label = model.names[class_id]
 
-            bbox = boxes.xyxy[i].tolist() if boxes.xyxy is not None else []
+            detected_counts[label] = detected_counts.get(label, 0) + 1
 
-            item_points = POINTS.get(class_name, 0)
-            total_points += item_points
+    for waste_type, count in detected_counts.items():
 
-            min_w, max_w = WEIGHT_GRAMS_RANGE.get(class_name, (100, 800))
-            estimated_min_weight_grams += min_w
-            estimated_max_weight_grams += max_w
+        weight = weights.get(waste_type, 0)
+        point = points.get(waste_type, 0)
 
-            waste_items.append({
-                "class_name": class_name,
-                "confidence": confidence,
-                "bbox": bbox,
-                "points": item_points,
-                "estimatedWeightRangeGrams": {
-                    "min": min_w,
-                    "max": max_w
-                }
-            })
+        total_weight += weight * count
+        total_points += point * count
 
-    return {
-        "wasteItems": waste_items,
-        "totalPoints": total_points,
-        "confidenceMet": len(waste_items) > 0,
-        "estimatedWeightRangeGrams": {
-            "min": estimated_min_weight_grams,
-            "max": estimated_max_weight_grams
-        }
-    }
+    annotated_frame = results[0].plot()
 
+    info = f"Weight: {total_weight} g | Points: {total_points}"
 
-if __name__ == "__main__":
-    if len(sys.argv) < 2:
-        print(json.dumps({"error": "image path required"}))
-        sys.exit(1)
+    cv2.putText(
+        annotated_frame,
+        info,
+        (20, 40),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        1,
+        (0, 255, 0),
+        2
+    )
 
-    image_path = sys.argv[1]
-    result = detect_waste(image_path)
+    cv2.imshow("ECOWASTE Detection", annotated_frame)
 
-    print(json.dumps(result))
+    if cv2.waitKey(1) & 0xFF == ord('q'):
+        break
+
+cap.release()
+cv2.destroyAllWindows()

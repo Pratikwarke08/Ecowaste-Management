@@ -5,6 +5,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from "react-router-dom";
 import { bootstrapThemeFromStorage } from "@/lib/theme";
+import { UserRole } from "@/lib/roles";
 
 // Lazy load all pages for code splitting
 const Index = lazy(() => import("./pages/Index"));
@@ -29,6 +30,13 @@ const ArtificialLungMonitoring = lazy(() => import('./pages/ArtificialLungMonito
 const Festivals = lazy(() => import('./pages/Festivals'));
 const FestivalsManagement = lazy(() => import('./pages/FestivalsManagement'));
 const MapPage = lazy(() => import("./pages/Map"));
+const RecyclingLogistics = lazy(() => import("./pages/RecyclingLogistics"));
+const WasteMarketplace = lazy(() => import("./pages/WasteMarketplace"));
+const GovernmentIntegration = lazy(() => import("./pages/GovernmentIntegration"));
+const CarbonCreditTracking = lazy(() => import("./pages/CarbonCreditTracking"));
+const MarketplaceHtml = lazy(() => import("./pages/MarketplaceHtml"));
+const PickupHtml = lazy(() => import("./pages/PickupHtml"));
+const ImpactHtml = lazy(() => import("./pages/ImpactHtml"));
 
 // Optimized QueryClient with caching
 const queryClient = new QueryClient({
@@ -70,11 +78,11 @@ const RoleProtectedRoute = ({
   allowedRoles,
 }: {
   children: ReactNode;
-  allowedRoles: Array<"collector" | "employee">;
+  allowedRoles: UserRole[];
 }) => {
   const location = useLocation();
   const token = localStorage.getItem("token");
-  const userType = localStorage.getItem("userType") as "collector" | "employee" | null;
+  const userType = localStorage.getItem("userType") as UserRole | null;
 
   if (!token) {
     window.history.replaceState(null, "", "/");
@@ -285,6 +293,62 @@ const App = () => {
                 element={
                   <ProtectedRoute>
                     <MapPage />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/recycling-logistics"
+                element={
+                  <RoleProtectedRoute allowedRoles={["recycling_logistics"]}>
+                    <RecyclingLogistics />
+                  </RoleProtectedRoute>
+                }
+              />
+              <Route
+                path="/waste-marketplace"
+                element={
+                  <RoleProtectedRoute allowedRoles={["waste_buyer"]}>
+                    <WasteMarketplace />
+                  </RoleProtectedRoute>
+                }
+              />
+              <Route
+                path="/government-integration"
+                element={
+                  <RoleProtectedRoute allowedRoles={["government_officer"]}>
+                    <GovernmentIntegration />
+                  </RoleProtectedRoute>
+                }
+              />
+              <Route
+                path="/carbon-credits"
+                element={
+                  <RoleProtectedRoute allowedRoles={["carbon_auditor"]}>
+                    <CarbonCreditTracking />
+                  </RoleProtectedRoute>
+                }
+              />
+              <Route
+                path="/marketplace.html"
+                element={
+                  <ProtectedRoute>
+                    <MarketplaceHtml />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/pickup.html"
+                element={
+                  <ProtectedRoute>
+                    <PickupHtml />
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/impact.html"
+                element={
+                  <ProtectedRoute>
+                    <ImpactHtml />
                   </ProtectedRoute>
                 }
               />

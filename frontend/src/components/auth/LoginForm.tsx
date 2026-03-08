@@ -9,6 +9,7 @@ import { Moon, Sun } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { API_BASE } from '@/lib/api';
 import { applyTheme } from '@/lib/theme';
+import { UserRole, roleLabel } from '@/lib/roles';
 
 const safeJson = async (res: Response) => {
   const text = await res.text();
@@ -20,14 +21,14 @@ const safeJson = async (res: Response) => {
 };
 
 interface LoginFormProps {
-  onLogin: (userType: 'collector' | 'employee', userData: { name?: string; email: string }) => void;
+  onLogin: (userType: UserRole, userData: { name?: string; email: string }) => void;
 }
 
 const LoginForm = ({ onLogin }: LoginFormProps) => {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [name, setName] = useState('');
-  const [userType, setUserType] = useState<'collector' | 'employee'>('collector');
+  const [userType, setUserType] = useState<UserRole>('collector');
   const [mode, setMode] = useState<'signin' | 'signup'>('signin');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
@@ -234,29 +235,24 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
                 <Label className="text-sm font-medium text-gray-700 dark:text-gray-300">Account Type:</Label>
                 <RadioGroup
                   value={userType}
-                  onValueChange={(value: 'collector' | 'employee') => setUserType(value)}
+                  onValueChange={(value: UserRole) => setUserType(value)}
                   className="grid grid-cols-2 gap-3"
                 >
-                  <div className="relative">
-                    <RadioGroupItem value="collector" id="collector" className="peer sr-only" />
-                    <Label
-                      htmlFor="collector"
-                      className="flex items-center justify-center gap-2 cursor-pointer rounded-lg border-2 border-gray-200 bg-white dark:bg-gray-800 dark:border-gray-700 p-3 hover:bg-emerald-50 dark:hover:bg-gray-700 peer-data-[state=checked]:border-emerald-600 peer-data-[state=checked]:bg-emerald-50 dark:peer-data-[state=checked]:bg-emerald-900/40 transition-all"
-                    >
-                      <Users className="h-4 w-4" />
-                      <span className="text-sm font-medium">Collector</span>
-                    </Label>
-                  </div>
-                  <div className="relative">
-                    <RadioGroupItem value="employee" id="employee" className="peer sr-only" />
-                    <Label
-                      htmlFor="employee"
-                      className="flex items-center justify-center gap-2 cursor-pointer rounded-lg border-2 border-gray-200 bg-white dark:bg-gray-800 dark:border-gray-700 p-3 hover:bg-emerald-50 dark:hover:bg-gray-700 peer-data-[state=checked]:border-emerald-600 peer-data-[state=checked]:bg-emerald-50 dark:peer-data-[state=checked]:bg-emerald-900/40 transition-all"
-                    >
-                      <Shield className="h-4 w-4" />
-                      <span className="text-sm font-medium">Employee</span>
-                    </Label>
-                  </div>
+                  {roleOptions.map((role) => {
+                    const Icon = role.icon;
+                    return (
+                      <div className="relative" key={role.value}>
+                        <RadioGroupItem value={role.value} id={role.value} className="peer sr-only" />
+                        <Label
+                          htmlFor={role.value}
+                          className="flex items-center justify-center gap-2 cursor-pointer rounded-lg border-2 border-gray-200 bg-white dark:bg-gray-800 dark:border-gray-700 p-3 hover:bg-emerald-50 dark:hover:bg-gray-700 peer-data-[state=checked]:border-emerald-600 peer-data-[state=checked]:bg-emerald-50 dark:peer-data-[state=checked]:bg-emerald-900/40 transition-all"
+                        >
+                          <Icon className="h-4 w-4" />
+                          <span className="text-sm font-medium">{roleLabel[role.value]}</span>
+                        </Label>
+                      </div>
+                    );
+                  })}
                 </RadioGroup>
               </div>
 
@@ -401,3 +397,11 @@ const LoginForm = ({ onLogin }: LoginFormProps) => {
 };
 
 export default LoginForm;
+  const roleOptions: Array<{ value: UserRole; icon: typeof Users }> = [
+    { value: 'collector', icon: Users },
+    { value: 'employee', icon: Shield },
+    { value: 'recycling_logistics', icon: Recycle },
+    { value: 'waste_buyer', icon: User },
+    { value: 'government_officer', icon: Mail },
+    { value: 'carbon_auditor', icon: Lock },
+  ];

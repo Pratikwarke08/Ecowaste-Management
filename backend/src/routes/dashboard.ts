@@ -6,6 +6,10 @@ import { IncidentReward } from "../models/incidentReward";
 import { User } from "../models/user";
 import { Dustbin } from "../models/dustbin";
 import { Complaint } from "../models/complaint";
+import { RecyclingJob } from "../models/recyclingJob";
+import { MarketplaceListing } from "../models/marketplaceListing";
+import { GovernmentCase } from "../models/governmentCase";
+import { CarbonCreditEntry } from "../models/carbonCreditEntry";
 
 const router = express.Router();
 
@@ -372,6 +376,237 @@ router.get("/community", authenticate, async (_req: AuthenticatedRequest, res) =
   }
 });
 
-export default router;
+router.get("/recycling-logistics", authenticate, async (req: AuthenticatedRequest, res) => {
+  try {
+    if (req.authUser?.role !== "recycling_logistics") {
+      return res.status(403).json({ error: "Forbidden" });
+    }
 
+    const [jobs, fullDustbins, unresolvedComplaints, approvedReports] = await Promise.all([
+      RecyclingJob.find({})
+        .populate("createdBy", "name email role")
+        .populate("assignedTo", "name email role")
+        .sort({ updatedAt: -1 })
+        .limit(40)
+        .lean(),
+      Dustbin.find({ $or: [{ status: "full" }, { urgent: true }] })
+        .select("name status fillLevel urgent coordinates updatedAt")
+        .sort({ updatedAt: -1 })
+        .limit(20)
+        .lean(),
+      Complaint.find({ status: { $in: ["pending", "in_progress"] } })
+        .select("title priority status location createdAt updatedAt")
+        .sort({ updatedAt: -1 })
+        .limit(20)
+        .lean(),
+      Report.find({ status: "approved" })
+        .select("materialType wasteWeightKg submittedAt collectorEmail")
+        .sort({ submittedAt: -1 })
+        .limit(120)
+        .lean(),
+    ]);
+
+    const byMaterial = new Map<string, number>();
+    approvedReports.forEach((r: any) => {
+      const key = (r.materialType || "unknown").toString();
+      const weight = Number(r.wasteWeightKg || 0);
+      byMaterial.set(key, (byMaterial.get(key) || 0) + (Number.isFinite(weight) ? weight : 0));
+    });
+
+    const materialSupply = Array.from(byMaterial.entries())
+      .map(([materialType, totalWeightKg]) => ({ materialType, totalWeightKg: Number(totalWeightKg.toFixed(2)) }))
+      .sort((a, b) => b.totalWeightKg - a.totalWeightKg)
+      .slice(0, 10);
+
+    const statusCount = {
+      pending: jobs.filter((j: any) => j.status === "pending").length,
+      assigned: jobs.filter((j: any) => j.status === "assigned").length,
+      inTransit: jobs.filter((j: any) => j.status === "in_transit").length,
+      delivered: jobs.filter((j: any) => j.status === "delivered").length,
+    };
+
+    return res.json({
+      summary: {
+        totalJobs: jobs.length,
+        ...statusCount,
+        fullOrUrgentDustbins: fullDustbins.length,
+        unresolvedComplaints: unresolvedComplaints.length,
+      },
+      jobs,
+      demandSignals: {
+        fullDustbins,
+        unresolvedComplaints,
+      },
+      materialSupply,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to load recycling logistics dashboard" });
+  }
+});
+
+router.get("/waste-marketplace", authenticate, async (req: AuthenticatedRequest, res) => {
+  try {
+    if (req.authUser?.role !== "waste_buyer") {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    const [listings, approvedReports, completedJobs] = await Promise.all([
+      MarketplaceListing.find({})
+        .populate("seller", "name email role")
+        .populate("buyer", "name email role")
+        .sort({ updatedAt: -1 })
+        .limit(60)
+        .lean(),
+      Report.find({ status: "approved" })
+        .select("materialType wasteWeightKg submittedAt")
+        .sort({ submittedAt: -1 })
+        .limit(200)
+        .lean(),
+      RecyclingJob.find({ status: "delivered" })
+        .select("materialType quantityKg updatedAt")
+        .sort({ updatedAt: -1 })
+        .limit(80)
+        .lean(),
+    ]);
+
+    const inventoryMap = new Map<string, number>();
+    approvedReports.forEach((r: any) => {
+      const key = (r.materialType || "unknown").toString();
+      inventoryMap.set(key, (inventoryMap.get(key) || 0) + Number(r.wasteWeightKg || 0));
+    });
+    completedJobs.forEach((j: any) => {
+      const key = (j.materialType || "unknown").toString();
+      inventoryMap.set(key, (inventoryMap.get(key) || 0) + Number(j.quantityKg || 0));
+    });
+
+    const liveInventory = Array.from(inventoryMap.entries())
+      .map(([materialType, quantityKg]) => ({ materialType, quantityKg: Number(quantityKg.toFixed(2)) }))
+      .sort((a, b) => b.quantityKg - a.quantityKg)
+      .slice(0, 12);
+
+    return res.json({
+      summary: {
+        openListings: listings.filter((l: any) => l.status === "open").length,
+        reservedListings: listings.filter((l: any) => l.status === "reserved").length,
+        soldListings: listings.filter((l: any) => l.status === "sold").length,
+        totalListings: listings.length,
+      },
+      listings,
+      liveInventory,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to load waste marketplace dashboard" });
+  }
+});
+
+router.get("/government-integration", authenticate, async (req: AuthenticatedRequest, res) => {
+  try {
+    if (req.authUser?.role !== "government_officer") {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    const [cases, incidents, complaints, reports, jobs] = await Promise.all([
+      GovernmentCase.find({})
+        .populate("submittedBy", "name email role")
+        .populate("reviewedBy", "name email role")
+        .sort({ updatedAt: -1 })
+        .limit(60)
+        .lean(),
+      Incident.find({})
+        .select("category status urgency updatedAt createdAt")
+        .sort({ updatedAt: -1 })
+        .limit(120)
+        .lean(),
+      Complaint.find({})
+        .select("title status priority updatedAt createdAt")
+        .sort({ updatedAt: -1 })
+        .limit(120)
+        .lean(),
+      Report.find({})
+        .select("status submittedAt verifiedAt")
+        .sort({ submittedAt: -1 })
+        .limit(200)
+        .lean(),
+      RecyclingJob.find({})
+        .select("status updatedAt createdAt")
+        .sort({ updatedAt: -1 })
+        .limit(120)
+        .lean(),
+    ]);
+
+    const unresolvedIncidents = incidents.filter((i: any) => i.status !== "resolved" && i.status !== "dismissed").length;
+    const unresolvedComplaints = complaints.filter((c: any) => c.status !== "resolved" && c.status !== "rejected").length;
+    const pendingVerifications = reports.filter((r: any) => r.status === "pending").length;
+    const delayedJobs = jobs.filter((j: any) => j.status !== "delivered").length;
+
+    return res.json({
+      summary: {
+        totalCases: cases.length,
+        submittedCases: cases.filter((c: any) => c.status === "submitted").length,
+        underReviewCases: cases.filter((c: any) => c.status === "under_review").length,
+        approvedCases: cases.filter((c: any) => c.status === "approved").length,
+        unresolvedIncidents,
+        unresolvedComplaints,
+        pendingVerifications,
+        delayedJobs,
+      },
+      cases,
+      operationalView: {
+        incidents: incidents.slice(0, 20),
+        complaints: complaints.slice(0, 20),
+      },
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to load government integration dashboard" });
+  }
+});
+
+router.get("/carbon-credits", authenticate, async (req: AuthenticatedRequest, res) => {
+  try {
+    if (req.authUser?.role !== "carbon_auditor") {
+      return res.status(403).json({ error: "Forbidden" });
+    }
+
+    const [ledger, approvedReports, deliveredJobs, resolvedIncidents] = await Promise.all([
+      CarbonCreditEntry.find({})
+        .populate("createdBy", "name email role")
+        .sort({ createdAt: -1 })
+        .limit(120)
+        .lean(),
+      Report.find({ status: "approved" }).select("wasteWeightKg submittedAt").lean(),
+      RecyclingJob.find({ status: "delivered" }).select("quantityKg updatedAt").lean(),
+      Incident.find({ status: "resolved" }).select("timeline updatedAt").lean(),
+    ]);
+
+    const totalLedgerCredits = ledger.reduce((sum: number, e: any) => sum + Number(e.credits || 0), 0);
+    const totalLedgerCo2eKg = ledger.reduce((sum: number, e: any) => sum + Number(e.co2eKg || 0), 0);
+    const reportWeightKg = approvedReports.reduce((sum: number, r: any) => sum + Number(r.wasteWeightKg || 0), 0);
+    const deliveredWeightKg = deliveredJobs.reduce((sum: number, j: any) => sum + Number(j.quantityKg || 0), 0);
+    const resolvedCount = resolvedIncidents.length;
+
+    const estimatedCo2eFromOpsKg = Number((reportWeightKg * CO2_PER_KG + deliveredWeightKg * 0.8 + resolvedCount * 2).toFixed(2));
+    const potentialCreditsFromOps = Number((estimatedCo2eFromOpsKg / 10).toFixed(2));
+
+    return res.json({
+      summary: {
+        totalLedgerCredits: Number(totalLedgerCredits.toFixed(2)),
+        totalLedgerCo2eKg: Number(totalLedgerCo2eKg.toFixed(2)),
+        estimatedCo2eFromOpsKg,
+        potentialCreditsFromOps,
+        reportWeightKg: Number(reportWeightKg.toFixed(2)),
+        deliveredWeightKg: Number(deliveredWeightKg.toFixed(2)),
+        resolvedIncidents: resolvedCount,
+      },
+      ledger,
+    });
+  } catch (err) {
+    console.error(err);
+    return res.status(500).json({ error: "Failed to load carbon dashboard" });
+  }
+});
+
+export default router;
 

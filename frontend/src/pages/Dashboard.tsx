@@ -4,9 +4,10 @@ import Navigation from '@/components/layout/Navigation';
 import CollectorDashboard from '@/components/dashboard/CollectorDashboard';
 import EmployeeDashboard from '@/components/dashboard/EmployeeDashboard';
 import { apiFetch } from '@/lib/api';
+import { UserRole } from '@/lib/roles';
 
 const Dashboard = () => {
-  const [userType, setUserType] = useState<'collector' | 'employee' | null>(null);
+  const [userType, setUserType] = useState<UserRole | null>(null);
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
@@ -15,7 +16,7 @@ const Dashboard = () => {
       try {
         const res = await apiFetch('/users/me');
         const data = await res.json();
-        const role = data.user?.role as 'collector' | 'employee' | undefined;
+        const role = data.user?.role as UserRole | undefined;
         if (!role) {
           throw new Error('Role missing');
         }
@@ -48,7 +49,18 @@ const Dashboard = () => {
     <div className="min-h-screen bg-background">
       <Navigation userRole={userType} />
       <main className="lg:ml-64 p-6">
-        {userType === 'collector' ? <CollectorDashboard /> : <EmployeeDashboard />}
+        {userType === 'collector' && <CollectorDashboard />}
+        {userType === 'employee' && <EmployeeDashboard />}
+        {userType !== 'collector' && userType !== 'employee' && (
+          <div className="max-w-3xl mx-auto space-y-4">
+            <div className="rounded-lg border bg-card p-6">
+              <h2 className="text-xl font-semibold">Role Workspace</h2>
+              <p className="text-sm text-muted-foreground mt-2">
+                Use the role-specific modules from the side menu to manage workflows.
+              </p>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

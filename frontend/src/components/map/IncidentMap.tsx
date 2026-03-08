@@ -32,6 +32,22 @@ export type Incident = {
   urgency: 'low' | 'medium' | 'high' | 'critical';
   status: string;
   rewarded?: boolean;
+  assignedTo?: { _id?: string; name?: string; email?: string } | string | null;
+  helperEmployees?: Array<{
+    employee?: { _id?: string; name?: string; email?: string } | string | null;
+    requestedAt?: string;
+    joinedAt?: string;
+  }>;
+  timeline?: {
+    assignedAt?: string;
+    startedAt?: string;
+    completedAt?: string;
+    resolutionMinutes?: number;
+  };
+  employeeLiveLocation?: {
+    coordinates: { lat: number; lng: number };
+    updatedAt: string;
+  } | null;
 };
 
 interface Props {

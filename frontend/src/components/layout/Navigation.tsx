@@ -21,9 +21,10 @@ import {
   Map,
   PartyPopper
 } from 'lucide-react'
+import { UserRole } from '@/lib/roles'
 
 interface NavigationProps {
-  userRole: 'collector' | 'employee'
+  userRole: UserRole
 }
 
 const Navigation = ({ userRole }: NavigationProps) => {
@@ -33,6 +34,9 @@ const Navigation = ({ userRole }: NavigationProps) => {
   const collectorNavItems = [
     { href: '/dashboard', label: 'Dashboard', icon: Home },
     { href: '/capture', label: 'Capture Waste', icon: Camera },
+    { href: '/marketplace.html', label: 'Marketplace', icon: Recycle },
+    { href: '/pickup.html', label: 'Pickup', icon: MapPin },
+    { href: '/impact.html', label: 'Impact', icon: Leaf },
     { href: '/capture-incident', label: 'Capture Incidents', icon: AlertTriangle },
     { href: '/rewards', label: 'My Rewards', icon: Award },
     { href: '/keep-alive', label: 'Keep Me Alive', icon: HeartHandshake },
@@ -46,6 +50,9 @@ const Navigation = ({ userRole }: NavigationProps) => {
 
   const employeeNavItems = [
     { href: '/dashboard', label: 'Dashboard', icon: Home },
+    { href: '/marketplace.html', label: 'Marketplace', icon: Recycle },
+    { href: '/pickup.html', label: 'Pickup', icon: MapPin },
+    { href: '/impact.html', label: 'Impact', icon: Leaf },
     { href: '/map', label: 'Map View', icon: Map },
     { href: '/dustbins', label: 'Manage Dustbins', icon: MapPin },
     { href: '/air-towers-management', label: 'Air Towers', icon: Leaf },
@@ -57,9 +64,55 @@ const Navigation = ({ userRole }: NavigationProps) => {
     { href: '/settings', label: 'Settings', icon: Settings },
   ]
 
-  const navItems = userRole === 'collector'
-    ? collectorNavItems
-    : employeeNavItems
+  const recyclingLogisticsItems = [
+    { href: '/dashboard', label: 'Dashboard', icon: Home },
+    { href: '/marketplace.html', label: 'Marketplace', icon: Recycle },
+    { href: '/pickup.html', label: 'Pickup', icon: MapPin },
+    { href: '/impact.html', label: 'Impact', icon: Leaf },
+    { href: '/recycling-logistics', label: 'Recycling Logistics', icon: Recycle },
+    { href: '/map', label: 'Map View', icon: Map },
+    { href: '/settings', label: 'Settings', icon: Settings },
+  ]
+
+  const wasteBuyerItems = [
+    { href: '/dashboard', label: 'Dashboard', icon: Home },
+    { href: '/marketplace.html', label: 'Marketplace', icon: Recycle },
+    { href: '/pickup.html', label: 'Pickup', icon: MapPin },
+    { href: '/impact.html', label: 'Impact', icon: Leaf },
+    { href: '/waste-marketplace', label: 'Waste Marketplace', icon: Users },
+    { href: '/settings', label: 'Settings', icon: Settings },
+  ]
+
+  const governmentOfficerItems = [
+    { href: '/dashboard', label: 'Dashboard', icon: Home },
+    { href: '/marketplace.html', label: 'Marketplace', icon: Recycle },
+    { href: '/pickup.html', label: 'Pickup', icon: MapPin },
+    { href: '/impact.html', label: 'Impact', icon: Leaf },
+    { href: '/government-integration', label: 'Government Integration', icon: Shield },
+    { href: '/settings', label: 'Settings', icon: Settings },
+  ]
+
+  const carbonAuditorItems = [
+    { href: '/dashboard', label: 'Dashboard', icon: Home },
+    { href: '/marketplace.html', label: 'Marketplace', icon: Recycle },
+    { href: '/pickup.html', label: 'Pickup', icon: MapPin },
+    { href: '/impact.html', label: 'Impact', icon: Leaf },
+    { href: '/carbon-credits', label: 'Carbon Credits', icon: Leaf },
+    { href: '/settings', label: 'Settings', icon: Settings },
+  ]
+
+  const navItems =
+    userRole === 'collector'
+      ? collectorNavItems
+      : userRole === 'employee'
+        ? employeeNavItems
+        : userRole === 'recycling_logistics'
+          ? recyclingLogisticsItems
+          : userRole === 'waste_buyer'
+            ? wasteBuyerItems
+            : userRole === 'government_officer'
+              ? governmentOfficerItems
+              : carbonAuditorItems
 
   const isActive = (path: string) => location.pathname === path
 

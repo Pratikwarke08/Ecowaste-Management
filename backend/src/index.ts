@@ -14,6 +14,11 @@ import complaintsRoutes from "./routes/complaints";
 import incidentsRoutes from "./routes/incidents";
 import festivalRoutes from "./routes/festivals";
 import airTowersRoutes from "./routes/airTowers";
+import recyclingLogisticsRoutes from "./routes/recyclingLogistics";
+import wasteMarketplaceRoutes from "./routes/wasteMarketplace";
+import governmentIntegrationRoutes from "./routes/governmentIntegration";
+import carbonCreditsRoutes from "./routes/carbonCredits";
+import compatModulesRoutes from "./routes/compatModules";
 
 dotenv.config();
 
@@ -138,6 +143,11 @@ app.use("/api/incidents", incidentsRoutes);
 app.use("/api/festivals", festivalRoutes);
 app.use("/api/air-towers", airTowersRoutes);
 app.use("/api/smog-towers", airTowersRoutes);
+app.use("/api/recycling-logistics", recyclingLogisticsRoutes);
+app.use("/api/waste-marketplace", wasteMarketplaceRoutes);
+app.use("/api/government-integration", governmentIntegrationRoutes);
+app.use("/api/carbon-credits", carbonCreditsRoutes);
+app.use("/api", compatModulesRoutes);
 
 /* =========================
    404 HANDLER (JSON ONLY)
